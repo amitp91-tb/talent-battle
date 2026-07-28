@@ -1,0 +1,14 @@
+{
+  "id": "0003",
+  "slug": "circle-area",
+  "title": "Area of a Circle",
+  "difficulty": "easy",
+  "tags": ["math", "geometry", "floating-point"],
+  "topic": "Programming Foundations",
+  "timeLimitMs": 2000,
+  "memoryMb": 256,
+  "checker": "float",
+  "floatTolerance": 0.001,
+  "points": 100,
+  "languagesAllowed": ["c", "cpp", "java", "python"]
+}

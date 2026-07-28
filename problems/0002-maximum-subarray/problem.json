@@ -1,0 +1,13 @@
+{
+  "id": "0002",
+  "slug": "maximum-subarray",
+  "title": "Maximum Subarray Sum",
+  "difficulty": "medium",
+  "tags": ["dsa", "greedy", "dynamic-programming", "kadane"],
+  "topic": "Basic + Intermediate DSA",
+  "timeLimitMs": 2000,
+  "memoryMb": 256,
+  "checker": "token",
+  "points": 100,
+  "languagesAllowed": ["c", "cpp", "java", "python"]
+}

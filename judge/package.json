@@ -1,0 +1,10 @@
+{
+  "name": "talent-battle-judge",
+  "version": "0.1.0",
+  "description": "Talent Battle coding-test judge: safely compiles and runs student code in C, C++, Java, Python against open + hidden test cases.",
+  "main": "runner.js",
+  "scripts": {
+    "demo": "node demo.js"
+  },
+  "license": "UNLICENSED"
+}

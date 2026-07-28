@@ -1,0 +1,18 @@
+# Render Blueprint — builds the Dockerfile (Node 22 + all 4 compilers).
+services:
+  - type: web
+    name: talent-battle
+    runtime: docker
+    # NOTE: a persistent disk (below) needs a paid instance (Starter ~$7/mo).
+    # On the Free plan the app still runs, but the database resets on each redeploy.
+    plan: starter
+    healthCheckPath: /
+    envVars:
+      - key: PORT
+        value: 3000
+      - key: TB_DATA
+        value: /data          # database is written here...
+    disk:
+      name: tb-data
+      mountPath: /data         # ...and this disk keeps it safe across redeploys
+      sizeGB: 1

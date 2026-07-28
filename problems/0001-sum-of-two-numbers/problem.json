@@ -1,0 +1,13 @@
+{
+  "id": "0001",
+  "slug": "sum-of-two-numbers",
+  "title": "Sum of Two Numbers",
+  "difficulty": "easy",
+  "tags": ["math", "implementation"],
+  "topic": "Programming Foundations",
+  "timeLimitMs": 2000,
+  "memoryMb": 256,
+  "checker": "token",
+  "points": 100,
+  "languagesAllowed": ["c", "cpp", "java", "python"]
+}

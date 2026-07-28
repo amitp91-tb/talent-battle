@@ -1,0 +1,726 @@
+// app.js — single-page app with login accounts (students + faculty).
+const app = document.getElementById('app');
+const userbar = document.getElementById('userbar');
+let ME = null, LANGS = { available:{}, labels:{} }, PROBLEMS = [], timer = null;
+
+const starters = {
+  python: "# Read all input, then print your answer.\nimport sys\ndata = sys.stdin.read().split()\n\n# TODO: compute the answer from `data`\nprint(\"your answer here\")",
+  cpp: "#include <bits/stdc++.h>\nusing namespace std;\nint main(){\n    // TODO: read input and print your answer\n    return 0;\n}",
+  c: "#include <stdio.h>\nint main(){\n    // TODO: read input and print your answer\n    return 0;\n}",
+  java: "import java.util.*;\npublic class Main {\n  public static void main(String[] args){\n    // TODO: read input and print your answer\n  }\n}"
+};
+
+async function apiGet(u){ const r = await fetch(u); return r.json(); }
+async function apiPost(u,b){ const r = await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+  return { status:r.status, body: await r.json() }; }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function toast(msg){
+  let t=document.getElementById('tb-toast');
+  if(!t){ t=document.createElement('div'); t.id='tb-toast'; document.body.appendChild(t);
+    t.style.cssText='position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:#2b2b2b;color:#fff;padding:10px 16px;border-radius:8px;font-size:14px;z-index:200;opacity:0;transition:opacity .2s;box-shadow:0 4px 14px rgba(0,0,0,.2)'; }
+  t.textContent=msg; t.style.opacity='1';
+  clearTimeout(t._t); t._t=setTimeout(()=>{ t.style.opacity='0'; }, 1800);
+}
+function pillClass(d){ return d==='easy'?'pill-easy':(d==='hard'?'pill-hard':'pill-medium'); }
+function stopTimer(){ if(timer){ clearInterval(timer); timer=null; } }
+
+// ---------- AUTH ----------
+function renderAuth(mode){
+  mode = mode || 'login';
+  userbar.innerHTML = '';
+  app.innerHTML = `
+    <div class="authwrap card">
+      <h1 style="text-align:center">Welcome to Talent Battle</h1>
+      <p class="muted" style="text-align:center;margin-top:0">Sign in to practice, get judged, and track your progress.</p>
+      <div class="authtabs">
+        <button id="tab-login" class="${mode==='login'?'active':''}" onclick="renderAuth('login')">Log in</button>
+        <button id="tab-reg" class="${mode==='register'?'active':''}" onclick="renderAuth('register')">Create account</button>
+      </div>
+      <div id="autherr" class="err"></div>
+      ${mode==='login' ? `
+        <div class="field"><label>Email</label><input id="email" type="email" placeholder="you@college.edu"></div>
+        <div class="field"><label>Password</label><input id="password" type="password"></div>
+        <button class="btn btn-primary" style="width:100%" onclick="doLogin()">Log in</button>
+        <p class="muted" style="margin-top:10px;font-size:12px;text-align:center">Forgot your password? Ask your administrator to reset it.</p>
+      ` : `
+        <p class="muted" style="margin-top:0">The first account created becomes the administrator. After that, sign-ups are students.</p>
+        <div class="field"><label>Full name</label><input id="name" placeholder="Rahul Sharma"></div>
+        <div class="field"><label>Email</label><input id="email" type="email" placeholder="you@college.edu"></div>
+        <div class="field"><label>Password</label><input id="password" type="password" placeholder="at least 4 characters"></div>
+        <div class="field"><label>Mobile number</label><input id="mobile" placeholder="9876543210"></div>
+        <div class="field"><label>College</label><input id="college" placeholder="ABC Engineering College"></div>
+        <div class="split"><div class="field"><label>Branch</label><input id="branch" placeholder="CSE"></div>
+        <div class="field"><label>Year of passing</label><input id="yearOfPassing" placeholder="2027"></div></div>
+        <button class="btn btn-primary" style="width:100%" onclick="doRegister()">Create account</button>
+      `}
+    </div>`;
+}
+function val(id){ const el=document.getElementById(id); return el?el.value:''; }
+async function doLogin(){
+  const { status, body } = await apiPost('/api/login', { email:val('email'), password:val('password') });
+  if(status!==200){ document.getElementById('autherr').textContent = body.error||'Login failed'; return; }
+  ME = body.user; await boot();
+}
+async function doRegister(){
+  const { status, body } = await apiPost('/api/register', { role:val('role'), name:val('name'), email:val('email'),
+    password:val('password'), mobile:val('mobile'), college:val('college'), branch:val('branch'), yearOfPassing:val('yearOfPassing') });
+  if(status!==200){ document.getElementById('autherr').textContent = body.error||'Could not create account'; return; }
+  ME = body.user; await boot();
+}
+async function doLogout(){ await apiPost('/api/logout', {}); ME=null; stopTimer(); renderAuth('login'); }
+
+function renderUserbar(){
+  let nav = '';
+  if(ME.role==='admin'){
+    nav = `<button onclick="renderAdminQuestions()">Questions</button>
+           <button onclick="renderBatches()">Batches</button>
+           <button onclick="renderStudents()">Students</button>
+           <button onclick="renderSubadmins()">Sub-Admins</button>
+           <button onclick="renderFaculty()">Results</button>
+           <button onclick="renderList()">Preview</button>`;
+  } else if(ME.role==='subadmin'){
+    nav = `<button onclick="renderFaculty()">Results</button>`;
+  } else {
+    nav = `<button onclick="renderStudentTests()">My Tests</button>
+           <button onclick="renderChallenge()">100 Days</button>
+           <button onclick="renderList()">All Problems</button>
+           <button onclick="renderDashboard()">My Dashboard</button>`;
+  }
+  userbar.innerHTML = `<nav>${nav}</nav>
+    <span class="who">${esc(ME.name)} · ${esc(ME.role)}</span>
+    <button class="btn btn-ghost" onclick="doLogout()">Log out</button>`;
+}
+
+// ---------- PROBLEM LIST ----------
+function renderList(){
+  stopTimer();
+  const rows = PROBLEMS.map(p=>`
+    <div class="card prow" onclick="openProblem('${p.id}')">
+      <div><div class="t">${esc(p.title)}</div><div class="tags">${esc((p.tags||[]).join(' · '))}</div></div>
+      <span class="grow"></span>
+      <span class="pill ${pillClass(p.difficulty)}">${esc(p.difficulty)}</span>
+      <button class="btn btn-ghost">Solve →</button>
+    </div>`).join('');
+  app.innerHTML = `<h1>Coding Problems</h1><p class="muted">Pick a problem, write code, and get it judged instantly.</p>
+    <div class="plist" style="margin-top:14px">${rows}</div>`;
+}
+
+// ---------- TEST SCREEN ----------
+async function openProblem(id){ renderTest(await apiGet('/api/problems/'+id)); }
+function langOptions(){ return Object.keys(LANGS.labels).map(k=>{ const ok=LANGS.available[k];
+  return `<option value="${k}" ${ok?'':'disabled'}>${esc(LANGS.labels[k])}${ok?'':' (not installed here)'}</option>`; }).join(''); }
+const firstAvailableLang = () => Object.keys(LANGS.available).find(k=>LANGS.available[k]) || 'python';
+
+function renderTest(d){
+  stopTimer();
+  const sample = d.samples[0] || {input:'',expected:''};
+  const startLang = firstAvailableLang();
+  app.innerHTML = `
+    <div class="test-top">
+      <button class="btn btn-ghost" onclick="renderList()">← Problems</button>
+      <div class="timer" id="timer">30:00</div>
+    </div>
+    <div class="split">
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <h2 style="margin:0">${esc(d.meta.title)}</h2>
+          <span class="pill ${pillClass(d.meta.difficulty)}">${esc(d.meta.difficulty)}</span></div>
+        <div class="muted" style="margin-bottom:8px">${esc((d.meta.tags||[]).join(' · '))}</div>
+        <div>${renderStatement(d.statement)}</div>
+        <div class="io"><b>Sample Input</b>${esc(sample.input.trim())}</div>
+        <div class="io"><b>Sample Output</b>${esc(sample.expected.trim())}</div>
+      </div>
+      <div class="card">
+        <div class="toolbar">
+          <select id="lang" onchange="onLangChange()">${langOptions()}</select>
+          <span class="grow"></span>
+          <button class="btn btn-ghost" onclick="doRun('${d.meta.id}')">▷ Run</button>
+          <button class="btn btn-primary" onclick="doSubmit('${d.meta.id}')">Submit</button>
+          <button class="btn btn-ghost" onclick="viewSolution('${d.meta.id}')">Solution</button>
+        </div>
+        <div class="editor-wrap">
+          <div class="editor-bar"><span class="dots"><i></i><i></i><i></i></span><span class="editor-file" id="editor-file">main.py</span></div>
+          <textarea class="editor" id="code" spellcheck="false"></textarea>
+        </div>
+        <div class="results card" id="results" style="background:#fffdf8">
+          <div class="muted">Click <b>Run</b> to test the sample, or <b>Submit</b> to grade everything.</div>
+        </div>
+      </div>
+    </div>`;
+  document.getElementById('lang').value = startLang;
+  document.getElementById('code').value = starters[startLang];
+  const ef=document.getElementById('editor-file'); if(ef) ef.textContent = fileFor[startLang]||'main';
+  startTimer();
+}
+function renderStatement(md){
+  return esc(md).replace(/^# .*$/m,'').replace(/```([\s\S]*?)```/g,'<pre class="io">$1</pre>')
+    .replace(/\n{2,}/g,'</p><p>').replace(/\n/g,'<br>');
+}
+const fileFor={python:'main.py',cpp:'main.cpp',c:'main.c',java:'Main.java'};
+function onLangChange(){ const k=document.getElementById('lang').value; const ta=document.getElementById('code');
+  if(Object.values(starters).includes(ta.value.trim())||ta.value.trim()==='') ta.value=starters[k];
+  const ef=document.getElementById('editor-file'); if(ef) ef.textContent=fileFor[k]||'main'; }
+function startTimer(){ let t=30*60; timer=setInterval(()=>{ if(t>0)t--; const m=Math.floor(t/60),s=t%60;
+  const el=document.getElementById('timer'); if(el) el.textContent=(m<10?'0':'')+m+':'+(s<10?'0':'')+s; },1000); }
+
+function verdictRow(r){ const cls=r.verdict==='Accepted'?'ok':'bad'; const name=r.hidden?'Hidden test '+r.index:'Sample test';
+  let extra=''; if(!r.hidden && r.got!==undefined) extra=` <span class="muted">got "${esc((r.got||'').trim())}", expected "${esc((r.expected||'').trim())}"</span>`;
+  return `<div class="row"><span class="dot ${cls}"></span>${name}: <b>&nbsp;${esc(r.verdict)}</b>${extra}</div>`; }
+
+async function doRun(id){ const res=document.getElementById('results'); res.innerHTML='<div class="muted">Running sample…</div>';
+  const { body:out } = await apiPost('/api/run',{ problemId:id, language:val('lang'), code:val('code') });
+  if(out.overall==='Language Unavailable'){ res.innerHTML=`<div class="row"><span class="dot bad"></span>${esc(out.note)}</div>`; return; }
+  if(out.overall==='Compilation Error'){ res.innerHTML=`<div class="row"><span class="dot bad"></span><b>Compilation Error</b></div><pre class="code">${esc((out.compileOutput||'').slice(0,600))}</pre>`; return; }
+  res.innerHTML='<div class="muted" style="margin-bottom:4px">Sample result</div>'+out.results.map(verdictRow).join(''); }
+
+async function doSubmit(id){ const res=document.getElementById('results'); res.innerHTML='<div class="muted">Judging all tests…</div>';
+  const { status, body:out } = await apiPost('/api/submit',{ problemId:id, language:val('lang'), code:val('code') });
+  if(status===401){ alert('Please log in again.'); renderAuth('login'); return; }
+  renderFeedback(await apiGet('/api/problems/'+id), out); }
+
+// ---------- FEEDBACK ----------
+function renderFeedback(d,out){
+  stopTimer();
+  if(out.overall==='Language Unavailable'){ alert(out.note); return; }
+  const pass = out.overall==='Accepted'; const fb = out.feedback||{};
+  app.innerHTML = `
+    <div class="test-top">
+      <button class="btn btn-ghost" onclick="renderList()">← Problems</button>
+      <button class="btn btn-primary" onclick="openProblem('${d.meta.id}')">↻ Re-attempt</button></div>
+    <div class="scorecard ${pass?'':'fail'}">
+      <div class="score-big">${out.score||0}<span style="font-size:16px;color:#8a836f">/100</span></div>
+      <div><b>${esc(out.overall)}</b> — ${out.passed} of ${out.total} tests passed<br>
+        <span class="muted">${esc(d.meta.title)}</span></div></div>
+    <div class="tabs">
+      <div class="tab active" data-p="fp1">What happened</div>
+      <div class="tab" data-p="fp2">Correct solution</div>
+      <div class="tab" data-p="fp3">How to improve</div></div>
+    <div class="pane active" id="fp1"><p>${esc(fb.summary||'')}</p>
+      <div style="margin-top:8px">${out.results.map(verdictRow).join('')}</div></div>
+    <div class="pane" id="fp2"><p class="muted">Official reference solution:</p>
+      <pre class="code" id="refcode">${esc(fb.referenceSolution||'')}</pre>
+      <button class="btn btn-ghost" onclick="copyRef()">Copy solution</button></div>
+    <div class="pane" id="fp3">${((fb.improve&&fb.improve.videos)||[]).map(v=>`<span class="chip">▶ ${esc(v)}</span>`).join('')}
+      <p class="muted" style="margin-top:12px">${esc((fb.improve&&fb.improve.note)||'')}</p></div>`;
+  document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{ document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('.pane').forEach(p=>p.classList.remove('active')); t.classList.add('active');
+    document.getElementById(t.dataset.p).classList.add('active'); });
+}
+function copyRef(){ const t=document.getElementById('refcode').innerText; navigator.clipboard&&navigator.clipboard.writeText(t); }
+
+// ---------- STUDENT DASHBOARD ----------
+async function renderDashboard(){ stopTimer();
+  const [d, ch] = await Promise.all([apiGet('/api/dashboard'), apiGet('/api/challenge').catch(()=>({days:[]}))]);
+  const daysSolved = (ch.days||[]).filter(x=>x.solved).length;
+  const rows = Object.entries(d.problems||{}).map(([id,x])=>`
+    <div class="skill"><div class="r"><span>${esc(x.title)}</span><span>${x.best}/100 · ${x.attempts} tries</span></div>
+    <div class="track"><i style="width:${x.best}%"></i></div></div>`).join('') || '<p class="muted">No submissions yet — go solve a problem!</p>';
+  const st=(v,l)=>`<div class="statcard" style="cursor:default"><div class="statval">${v}</div><div class="statlabel">${l}</div></div>`;
+  app.innerHTML = `
+    <div class="hero"><div><h1 style="margin:0">Hi ${esc(ME.name.split(' ')[0])} 👋</h1>
+      <p class="muted" style="margin:4px 0 0">Keep the streak going — every problem counts.</p></div></div>
+    <div class="statgrid">
+      ${st(d.solved||0,'Problems solved (100/100)')}
+      ${st((d.avgScore||0),'Average score')}
+      ${st(d.totalSubmissions||0,'Total submissions')}
+      ${st(daysSolved+' / 100','100 Days progress')}
+    </div>
+    <div class="qa" style="margin:16px 0">
+      <button class="btn btn-primary" onclick="renderStudentTests()">My Tests</button>
+      <button class="btn btn-ghost" onclick="renderChallenge()">100 Days of Code</button>
+      <button class="btn btn-ghost" onclick="renderList()">Practice all problems</button>
+    </div>
+    <div class="card"><h2>Best score per problem</h2>${rows}</div>`;
+}
+
+// ---------- ADMIN HOME (overview) ----------
+async function renderAdminHome(){ stopTimer();
+  const d = await apiGet('/api/admin/overview');
+  const stat=(label,val,onclick)=>`<div class="statcard" ${onclick?`onclick="${onclick}"`:'style="cursor:default"'}><div class="statval">${val}</div><div class="statlabel">${label}</div></div>`;
+  const recent = (d.recent||[]).map(r=>`<div class="actrow"><span>${esc(r.student)}</span><span class="muted">${esc(r.title)}</span><span class="pill ${r.overall==='Accepted'?'pill-easy':'pill-hard'}">${r.score}/100</span></div>`).join('') || '<p class="muted">No submissions yet.</p>';
+  app.innerHTML = `
+    <div class="hero"><div><h1 style="margin:0">Welcome back, ${esc(ME.name.split(' ')[0])} 👋</h1>
+      <p class="muted" style="margin:4px 0 0">An overview of your platform.</p></div></div>
+    <div class="statgrid">
+      ${stat('Students',d.students,'renderStudents()')}
+      ${stat('Sub-Admins',d.subadmins,'renderSubadmins()')}
+      ${stat('Batches',d.batches,'renderBatches()')}
+      ${stat('Questions',d.questions,'renderAdminQuestions()')}
+      ${stat('Tests',d.tests,'renderAdminTests()')}
+      ${stat('Submissions',d.submissions,'renderFaculty()')}
+    </div>
+    <div class="split" style="margin-top:16px">
+      <div class="card"><h2>Quick actions</h2>
+        <div class="qa">
+          <button class="btn btn-primary" onclick="renderQuestionForm()">+ New question</button>
+          <button class="btn btn-ghost" onclick="renderTestForm()">+ New test</button>
+          <button class="btn btn-ghost" onclick="renderStudents()">+ Add students</button>
+          <button class="btn btn-ghost" onclick="renderBatches()">+ New batch</button>
+          <button class="btn btn-ghost" onclick="renderSubadmins()">+ Sub-admin</button>
+        </div>
+      </div>
+      <div class="card"><h2>Recent activity</h2>${recent}</div>
+    </div>`;
+}
+
+// ---------- FACULTY DASHBOARD ----------
+async function renderFaculty(){ stopTimer();
+  const d = await apiGet('/api/analytics');
+  const sm = d.summary||{students:0,active:0,avgScore:0,solvedTotal:0};
+  const status = (a)=> a>=85?'<span class="badge b-ready">Ready</span>':(a>=50?'<span class="badge b-mod">Moderate</span>':'<span class="badge b-imp">Needs work</span>');
+  const gtable = (title, arr, unit)=>`<div class="card" style="margin-bottom:14px"><h2>${title}</h2>
+    <table><tr><th>${unit}</th><th>Students</th><th>Avg score</th><th>Solved</th><th>Status</th></tr>
+    ${(arr||[]).map(g=>`<tr><td>${esc(g.label)}</td><td>${g.students}</td><td>${g.avg}</td><td>${g.solved}</td><td>${status(g.avg)}</td></tr>`).join('')||'<tr><td colspan="5" class="muted">No data yet.</td></tr>'}</table></div>`;
+  const batchNames = [...new Set((d.students||[]).map(s=>s.batch))];
+  const filterOpts = '<option value="">All batches</option>'+batchNames.map(b=>`<option value="${esc(b)}">${esc(b)}</option>`).join('');
+  const rows = (d.students||[]).map(s=>`<tr data-batch="${esc(s.batch)}"><td>${esc(s.name)}</td><td>${esc(s.batch)}</td><td>${esc(s.branch)}</td><td>${esc(s.year)}</td><td>${s.avg}</td><td>${s.solved}</td><td>${s.attempts}</td><td>${status(s.avg)}</td></tr>`).join('')
+    || '<tr><td colspan="8" class="muted">No students yet.</td></tr>';
+  const weak = (d.weakTopics||[]).map(w=>`<div class="skill"><div class="r"><span>${esc(w.tag)}</span><span>${w.count} weak submissions</span></div>
+    <div class="track"><i class="bad" style="width:${Math.min(100,w.count*15)}%"></i></div></div>`).join('') || '<p class="muted">Not enough data yet.</p>';
+  app.innerHTML = `<h1>Results &amp; Analytics</h1><p class="muted">Showing: ${esc(d.scope||'')}</p>
+    <div class="statgrid" style="margin-bottom:16px">
+      <div class="statcard" style="cursor:default"><div class="statval">${sm.students}</div><div class="statlabel">Students</div></div>
+      <div class="statcard" style="cursor:default"><div class="statval">${sm.active}</div><div class="statlabel">Active (have submitted)</div></div>
+      <div class="statcard" style="cursor:default"><div class="statval">${sm.avgScore}</div><div class="statlabel">Average score</div></div>
+      <div class="statcard" style="cursor:default"><div class="statval">${sm.solvedTotal}</div><div class="statlabel">Problems solved (100/100)</div></div>
+    </div>
+    <div class="split">
+      ${gtable('By Branch', d.byBranch, 'Branch')}
+      ${gtable('By Year of passing', d.byYear, 'Year')}
+    </div>
+    ${gtable('By Batch (lowest avg first — intervene early)', d.byBatch, 'Batch')}
+    <div class="card" style="margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px"><h2 style="margin:0">Students</h2><span class="grow"></span>
+        <select id="an-filter" onchange="filterStudents()">${filterOpts}</select></div>
+      <table><tr><th>Student</th><th>Batch</th><th>Branch</th><th>Year</th><th>Avg</th><th>Solved</th><th>Attempts</th><th>Status</th></tr>
+      <tbody id="an-rows">${rows}</tbody></table></div>
+    <div class="card"><h2>Weakest topics</h2>${weak}</div>`;
+}
+function filterStudents(){ const v=document.getElementById('an-filter').value;
+  document.querySelectorAll('#an-rows tr').forEach(tr=>{ tr.style.display=(!v||tr.dataset.batch===v)?'':'none'; }); }
+
+// ---------- BOOT ----------
+async function boot(){
+  renderUserbar();
+  LANGS = await apiGet('/api/languages');
+  PROBLEMS = await apiGet('/api/problems');
+  if(ME.role==='admin') renderAdminHome(); else if(ME.role==='subadmin') renderFaculty(); else renderList();
+}
+document.addEventListener('keydown', (e)=>{
+  if(e.key==='Tab' && e.target && e.target.classList && e.target.classList.contains('editor')){
+    e.preventDefault();
+    const ta=e.target, a=ta.selectionStart, b=ta.selectionEnd;
+    ta.value=ta.value.slice(0,a)+'    '+ta.value.slice(b);
+    ta.selectionStart=ta.selectionEnd=a+4;
+  }
+});
+(async function init(){
+  const me = await apiGet('/api/me');
+  if(me.user){ ME = me.user; await boot(); } else { renderAuth('login'); }
+})();
+
+
+// ---------- ADMIN: QUESTION MANAGEMENT ----------
+async function renderAdminQuestions(){
+  stopTimer();
+  const list = await apiGet('/api/admin/questions');
+  const rows = list.map(q=>`
+    <div class="card prow">
+      <div><div class="t">${esc(q.title)}</div>
+        <div class="tags">${esc((q.tags||[]).join(' · '))} &nbsp;·&nbsp; ${q.sampleCount} open, ${q.hiddenCount} hidden tests</div></div>
+      <span class="grow"></span>
+      <span class="pill ${pillClass(q.difficulty)}">${esc(q.difficulty)}</span>
+      <button class="btn btn-ghost" onclick="delQuestion('${q.id}', this)">Delete</button>
+    </div>`).join('') || '<p class="muted">No questions yet. Click “New question” to create one.</p>';
+  app.innerHTML = `<div style="display:flex;align-items:center;gap:12px">
+      <h1 style="margin:0">Questions</h1><span class="grow"></span>
+      <button class="btn btn-primary" onclick="renderQuestionForm()">+ New question</button></div>
+    <p class="muted">These are the coding questions your students see. Each has open (visible) and hidden test cases.</p>
+    <div class="plist" style="margin-top:14px">${rows}</div>`;
+}
+async function delQuestion(id, btn){
+  const title = btn.closest('.prow').querySelector('.t').textContent;
+  if(!confirm('Delete "'+title+'"? This cannot be undone.')) return;
+  await fetch('/api/admin/questions/'+id, { method:'DELETE' });
+  renderAdminQuestions();
+}
+function caseRowHTML(){
+  return `<div class="caserow">
+    <textarea class="io-in" placeholder="input (stdin)"></textarea>
+    <textarea class="io-out" placeholder="expected output"></textarea>
+    <button class="btn btn-ghost" onclick="this.closest('.caserow').remove()">✕</button></div>`;
+}
+function addCase(kind){ document.getElementById(kind+'-cases').insertAdjacentHTML('beforeend', caseRowHTML()); }
+function collectCases(kind){
+  return [...document.querySelectorAll('#'+kind+'-cases .caserow')].map(r=>({
+    input: r.querySelector('.io-in').value, expected: r.querySelector('.io-out').value }));
+}
+function renderQuestionForm(){
+  stopTimer();
+  app.innerHTML = `
+    <div class="test-top"><button class="btn btn-ghost" onclick="renderAdminQuestions()">← Questions</button></div>
+    <h1>New question</h1>
+    <div id="qerr" class="err"></div>
+    <div class="card">
+      <div class="field"><label>Title</label><input id="q-title" placeholder="Two Sum"></div>
+      <div class="split">
+        <div class="field"><label>Difficulty</label><select id="q-diff"><option>easy</option><option>medium</option><option>hard</option></select></div>
+        <div class="field"><label>Answer checking</label><select id="q-checker">
+          <option value="token">token (normal)</option><option value="exact">exact match</option><option value="float">float (allow tolerance)</option></select></div>
+      </div>
+      <div class="split">
+        <div class="field"><label>Tags (comma-separated)</label><input id="q-tags" placeholder="dsa, arrays"></div>
+        <div class="field"><label>Topic</label><input id="q-topic" placeholder="Basic DSA"></div>
+      </div>
+      <div class="split">
+        <div class="field"><label>Time limit (ms)</label><input id="q-time" value="2000"></div>
+        <div class="field"><label>Memory (MB)</label><input id="q-mem" value="256"></div>
+      </div>
+      <div class="field"><label>Problem statement</label>
+        <textarea id="q-statement" style="height:120px" placeholder="Describe the problem, the input format, the output format, and an example."></textarea></div>
+      <div class="field"><label>Reference solution — Python, optional (shown to students in feedback)</label>
+        <textarea id="q-ref" class="editor" style="height:110px"></textarea></div>
+
+      <h2 style="margin-top:16px">Open (visible) test cases</h2>
+      <p class="muted" style="margin-top:0">Students can see these examples.</p>
+      <div id="sample-cases"></div>
+      <button class="btn btn-ghost" onclick="addCase('sample')">+ Add open case</button>
+
+      <h2 style="margin-top:18px">Hidden test cases</h2>
+      <p class="muted" style="margin-top:0">Used for grading — students never see these. Add at least one.</p>
+      <div id="hidden-cases"></div>
+      <button class="btn btn-ghost" onclick="addCase('hidden')">+ Add hidden case</button>
+
+      <div style="margin-top:18px"><button class="btn btn-primary" onclick="submitQuestion()">Create question</button></div>
+    </div>`;
+  addCase('sample'); addCase('hidden');
+}
+async function submitQuestion(){
+  const payload = {
+    title: val('q-title'), difficulty: val('q-diff'), checker: val('q-checker'),
+    tags: val('q-tags'), topic: val('q-topic'), timeLimitMs: val('q-time'), memoryMb: val('q-mem'),
+    statement: val('q-statement'), reference: val('q-ref'),
+    samples: collectCases('sample'), hidden: collectCases('hidden') };
+  const { status, body } = await apiPost('/api/admin/questions', payload);
+  if(status!==200){ document.getElementById('qerr').textContent = body.error || 'Could not create question'; return; }
+  renderAdminQuestions();
+}
+
+
+// ---------- ADMIN: BATCHES ----------
+async function renderBatches(){
+  stopTimer();
+  const list = await apiGet('/api/admin/batches');
+  const rows = list.map(b=>`
+    <div class="card prow">
+      <div><div class="t">${esc(b.name)}</div><div class="tags">${b.students} student(s)</div></div>
+      <span class="grow"></span>
+      <button class="btn btn-ghost" onclick="delBatch('${b.id}','${esc(b.name).replace(/'/g,"\\'")}')">Delete</button>
+    </div>`).join('') || '<p class="muted">No batches yet. Create one below.</p>';
+  app.innerHTML = `<h1>Batches</h1>
+    <p class="muted">Group students into batches (e.g. CSE-A 2027). You’ll assign batches to sub-admins later.</p>
+    <div class="card" style="margin:14px 0">
+      <div class="split">
+        <div class="field"><label>College</label><input id="b-college" placeholder="ABC Engineering College"></div>
+        <div class="field"><label>Branch</label><input id="b-branch" placeholder="CSE"></div>
+      </div>
+      <div class="split">
+        <div class="field"><label>Year of passing</label><input id="b-year" placeholder="2027"></div>
+        <div class="field" style="align-self:end"><button class="btn btn-primary" onclick="addBatch()">+ Create batch</button></div>
+      </div>
+      <div id="batcherr" class="err"></div>
+    </div>
+    <div class="plist">${rows}</div>`;
+}
+async function addBatch(){
+  const { status, body } = await apiPost('/api/admin/batches', { college: val('b-college'), branch: val('b-branch'), yearOfPassing: val('b-year') });
+  if(status!==200){ document.getElementById('batcherr').textContent = body.error || 'Could not create batch'; return; }
+  renderBatches();
+}
+async function delBatch(id, name){
+  if(!confirm('Delete batch "'+name+'"? Students in it become unassigned.')) return;
+  await fetch('/api/admin/batches/'+id, { method:'DELETE' }); renderBatches();
+}
+
+// ---------- ADMIN: STUDENTS ----------
+async function renderStudents(){
+  stopTimer();
+  const [students, batches] = await Promise.all([apiGet('/api/admin/students'), apiGet('/api/admin/batches')]);
+  const opts = (sel)=> `<option value="">— none —</option>` +
+    batches.map(b=>`<option value="${b.id}" ${b.id===sel?'selected':''}>${esc(b.name)}</option>`).join('');
+  const rows = students.map(s=>`<tr>
+    <td>${esc(s.name)}</td><td>${esc(s.email)}</td><td>${esc(s.branch||'-')}</td><td>${esc(s.yearOfPassing||'-')}</td>
+    <td><select onchange="assignBatch('${s.id}', this.value)">${opts(s.batchId)}</select></td>
+    <td>${s.avg}</td>
+    <td><button class="btn btn-ghost" onclick="resetPassword('${s.id}','${esc(s.email)}')">Reset PW</button></td></tr>`).join('') || '<tr><td colspan="7" class="muted">No students yet.</td></tr>';
+  app.innerHTML = `<h1>Students</h1>
+    <p class="muted">Add students and assign each to a batch. Students can also sign up themselves.</p>
+    <div class="card" style="margin:14px 0"><h2>Add a student</h2>
+      <div class="split">
+        <div class="field"><label>Name</label><input id="s-name"></div>
+        <div class="field"><label>Email</label><input id="s-email"></div>
+      </div>
+      <div class="split">
+        <div class="field"><label>Mobile</label><input id="s-mobile"></div>
+        <div class="field"><label>Branch</label><input id="s-branch"></div>
+      </div>
+      <div class="split">
+        <div class="field"><label>Year of passing</label><input id="s-year"></div>
+        <div class="field"><label>Temporary password</label><input id="s-pass" placeholder="they can change later"></div>
+      </div>
+      <div class="field"><label>Batch</label><select id="s-batch">${opts('')}</select></div>
+      <button class="btn btn-primary" onclick="addStudent()">+ Add student</button>
+      <div id="stuerr" class="err"></div>
+    </div>
+    <div class="card" style="margin-bottom:14px"><h2>Bulk upload students (CSV)</h2>
+      <p class="muted" style="margin-top:0">In Excel choose <b>File → Save As → CSV</b>. Columns: <span class="k">name,email,password,mobile,college,branch,year,batch</span> (only name &amp; email required). <a href="#" onclick="downloadTemplate();return false;">Download template</a></p>
+      <div class="split">
+        <div class="field"><label>Choose CSV file</label><input type="file" id="bulk-file" accept=".csv"></div>
+        <div class="field"><label>Default batch (for rows with no batch)</label><select id="bulk-batch">${opts('')}</select></div>
+      </div>
+      <div class="field"><label>…or paste CSV here</label><textarea id="bulk-text" style="height:90px" placeholder="name,email,password,batch"></textarea></div>
+      <button class="btn btn-primary" onclick="bulkUpload()">Upload students</button>
+      <div id="bulkresult" class="muted" style="margin-top:8px"></div>
+    </div>
+    <div class="card"><h2>All students</h2>
+      <table><tr><th>Name</th><th>Email</th><th>Branch</th><th>Year</th><th>Batch</th><th>Avg</th><th></th></tr>${rows}</table></div>`;
+}
+async function addStudent(){
+  const { status, body } = await apiPost('/api/admin/students',
+    { name:val('s-name'), email:val('s-email'), password:val('s-pass'), batchId:val('s-batch'),
+      mobile:val('s-mobile'), branch:val('s-branch'), yearOfPassing:val('s-year') });
+  if(status!==200){ document.getElementById('stuerr').textContent = body.error || 'Could not add student'; return; }
+  renderStudents();
+}
+async function assignBatch(id, batchId){ const { status } = await apiPost('/api/admin/students/'+id+'/batch', { batchId }); toast(status===200?'Batch updated ✓':'Could not update'); }
+
+
+// ---------- ADMIN: SUB-ADMINS ----------
+async function renderSubadmins(){
+  stopTimer();
+  const [subs, batches] = await Promise.all([apiGet('/api/admin/subadmins'), apiGet('/api/admin/batches')]);
+  const card = (u)=>{
+    const checks = batches.length ? batches.map(b=>`<label class="chk"><input type="checkbox" value="${b.id}" ${(u.assignedBatches||[]).includes(b.id)?'checked':''}> ${esc(b.name)}</label>`).join('')
+      : '<span class="muted">No batches yet — create some in the Batches tab first.</span>';
+    return `<div class="card" data-sub="${u.id}" style="margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:8px"><b>${esc(u.name)}</b><span class="muted">${esc(u.email)}</span></div>
+      <div class="muted" style="margin:6px 0">Assign batches — this sub-admin will see only these students:</div>
+      <div class="checks">${checks}</div>
+      <button class="btn btn-primary" style="margin-top:10px" onclick="saveSubBatches('${u.id}')">Save assignments</button>
+      <button class="btn btn-ghost" style="margin-top:10px" onclick="resetPassword('${u.id}','${esc(u.email)}')">Reset password</button>
+    </div>`;
+  };
+  const list = subs.map(card).join('') || '<p class="muted">No sub-admins yet.</p>';
+  app.innerHTML = `<h1>Sub-Admins</h1>
+    <p class="muted">A sub-admin can only see results & analytics for the students in the batches you assign them.</p>
+    <div class="card" style="margin:14px 0"><h2>Add a sub-admin</h2>
+      <div class="split"><div class="field"><label>Name</label><input id="sa-name"></div>
+        <div class="field"><label>Email</label><input id="sa-email"></div></div>
+      <div class="field"><label>Temporary password</label><input id="sa-pass"></div>
+      <button class="btn btn-primary" onclick="addSubadmin()">+ Add sub-admin</button>
+      <div id="saerr" class="err"></div></div>
+    ${list}`;
+}
+async function addSubadmin(){
+  const { status, body } = await apiPost('/api/admin/subadmins',
+    { name:val('sa-name'), email:val('sa-email'), password:val('sa-pass') });
+  if(status!==200){ document.getElementById('saerr').textContent = body.error||'Could not add sub-admin'; return; }
+  renderSubadmins();
+}
+async function saveSubBatches(id){
+  const card = document.querySelector('[data-sub="'+id+'"]');
+  const ids = [...card.querySelectorAll('.checks input:checked')].map(x=>x.value);
+  const btn = card.querySelector('button');
+  const label = btn.textContent; btn.textContent = 'Saving…'; btn.disabled = true;
+  const { status } = await apiPost('/api/admin/subadmins/'+id+'/batches', { batchIds: ids });
+  btn.disabled = false; btn.textContent = label;
+  toast(status===200 ? 'Assignments saved ✓' : 'Could not save — try again');
+}
+
+
+// ---------- ADMIN: TESTS / CHALLENGES ----------
+async function renderAdminTests(){
+  stopTimer();
+  const list = await apiGet('/api/admin/tests');
+  const rows = list.map(t=>`
+    <div class="card prow">
+      <div><div class="t">${esc(t.title)}</div>
+        <div class="tags">${t.questionCount} question(s) · ${t.batchNames.length?('for '+t.batchNames.map(esc).join(', ')):'all batches'}</div></div>
+      <span class="grow"></span>
+      <button class="btn btn-ghost" onclick="delTest('${t.id}', this)">Delete</button>
+    </div>`).join('') || '<p class="muted">No tests yet. Create one to bundle questions together.</p>';
+  app.innerHTML = `<div style="display:flex;align-items:center;gap:12px">
+      <h1 style="margin:0">Tests / Challenges</h1><span class="grow"></span>
+      <button class="btn btn-primary" onclick="renderTestForm()">+ New test</button></div>
+    <p class="muted">Bundle questions into a named test and assign it to specific batches.</p>
+    <div class="plist" style="margin-top:14px">${rows}</div>`;
+}
+async function delTest(id, btn){
+  const title = btn.closest('.prow').querySelector('.t').textContent;
+  if(!confirm('Delete "'+title+'"?')) return;
+  await fetch('/api/admin/tests/'+id, { method:'DELETE' }); renderAdminTests();
+}
+async function renderTestForm(){
+  stopTimer();
+  const [questions, batches] = await Promise.all([apiGet('/api/admin/questions'), apiGet('/api/admin/batches')]);
+  const qChecks = questions.length ? questions.map(q=>`<label class="chk"><input type="checkbox" class="q-pick" value="${q.id}"> ${esc(q.title)} <span class="muted">(${esc(q.difficulty)})</span></label>`).join('')
+    : '<span class="muted">No questions yet — create some in the Questions tab.</span>';
+  const bChecks = batches.length ? batches.map(b=>`<label class="chk"><input type="checkbox" class="b-pick" value="${b.id}"> ${esc(b.name)}</label>`).join('')
+    : '<span class="muted">No batches yet.</span>';
+  app.innerHTML = `<div class="test-top"><button class="btn btn-ghost" onclick="renderAdminTests()">← Tests</button></div>
+    <h1>New test / challenge</h1><div id="terr" class="err"></div>
+    <div class="card">
+      <div class="field"><label>Title</label><input id="t-title" placeholder="Week 1 — Arrays & Strings"></div>
+      <div class="field"><label>Description (optional)</label><textarea id="t-desc" style="height:70px"></textarea></div>
+      <h2 style="margin-top:14px">Pick questions</h2>
+      <div class="checks">${qChecks}</div>
+      <h2 style="margin-top:16px">Assign to batches</h2>
+      <p class="muted" style="margin-top:0">Leave all unchecked to show this test to every student.</p>
+      <div class="checks">${bChecks}</div>
+      <div style="margin-top:16px"><button class="btn btn-primary" onclick="submitTest()">Create test</button></div>
+    </div>`;
+}
+async function submitTest(){
+  const questionIds = [...document.querySelectorAll('.q-pick:checked')].map(x=>x.value);
+  const batchIds = [...document.querySelectorAll('.b-pick:checked')].map(x=>x.value);
+  const { status, body } = await apiPost('/api/admin/tests',
+    { title:val('t-title'), description:val('t-desc'), questionIds, batchIds });
+  if(status!==200){ document.getElementById('terr').textContent = body.error||'Could not create test'; return; }
+  renderAdminTests();
+}
+
+// ---------- STUDENT: MY TESTS ----------
+async function renderStudentTests(){
+  stopTimer();
+  const list = await apiGet('/api/tests');
+  const rows = list.map(t=>`
+    <div class="card prow" onclick="openTest('${t.id}')">
+      <div><div class="t">${esc(t.title)}</div>
+        <div class="tags">${t.questionCount} question(s)${t.description?' · '+esc(t.description):''}</div></div>
+      <span class="grow"></span><button class="btn btn-ghost">Open →</button>
+    </div>`).join('') || '<p class="muted">No tests assigned to you yet. Try “All Problems” to practise freely.</p>';
+  app.innerHTML = `<h1>My Tests</h1><p class="muted">Tests your college has assigned to your batch.</p>
+    <div class="plist" style="margin-top:14px">${rows}</div>`;
+}
+async function openTest(id){
+  const t = await apiGet('/api/tests/'+id);
+  const rows = (t.questions||[]).map(q=>`
+    <div class="card prow" onclick="openProblem('${q.id}')">
+      <div><div class="t">${esc(q.title)}</div><div class="tags">${esc((q.tags||[]).join(' · '))}</div></div>
+      <span class="grow"></span><span class="pill ${pillClass(q.difficulty)}">${esc(q.difficulty)}</span>
+      <button class="btn btn-ghost">Solve →</button>
+    </div>`).join('') || '<p class="muted">This test has no questions yet.</p>';
+  app.innerHTML = `<div class="test-top"><button class="btn btn-ghost" onclick="renderStudentTests()">← My Tests</button></div>
+    <h1>${esc(t.title)}</h1>${t.description?`<p class="muted">${esc(t.description)}</p>`:''}
+    <div class="plist" style="margin-top:14px">${rows}</div>`;
+}
+
+
+// ---------- 100 DAYS OF CODE ----------
+async function renderChallenge(){
+  stopTimer();
+  const d = await apiGet('/api/challenge');
+  const solvedCount = d.days.filter(x=>x.solved).length;
+  const cells = d.days.map(day=>{
+    const state = day.solved?'done':(day.unlocked?'open':'locked');
+    const badge = day.solved?'✓':(day.unlocked?'':'🔒');
+    const click = day.unlocked?`onclick="openChallenge('${day.id}')"`:'';
+    return `<div class="day ${state}" ${click}>
+      <div class="day-n">Day ${day.day}</div>
+      <div class="day-t">${esc(day.title)}</div>
+      <div class="day-b"><span class="pill ${pillClass(day.difficulty)}">${esc(day.difficulty)}</span><span class="day-badge">${badge}</span></div>
+    </div>`;
+  }).join('');
+  app.innerHTML = `<h1>100 Days of Code</h1>
+    <p class="muted">A daily journey from the easiest program (Day 1) to the hardest (Day 100). Solve a day to unlock the next.</p>
+    <div class="progress-wrap"><div class="progress-bar"><i style="width:${solvedCount}%"></i></div><span class="progress-label">${solvedCount}/100 solved</span></div>
+    <div class="daygrid">${cells}</div>`;
+}
+async function openChallenge(id){ renderTest(await apiGet('/api/challenge/'+id)); }
+
+// ---------- VIEW SOLUTION (works for challenge + admin questions) ----------
+async function viewSolution(id){
+  const res = document.getElementById('results');
+  const r = await fetch('/api/solution/'+id); const body = await r.json();
+  if(r.status!==200){ res.innerHTML = `<div class="row"><span class="dot bad"></span>${esc(body.error||'Solution locked')}</div>`; return; }
+  res.innerHTML = `<div class="muted" style="margin-bottom:4px">Reference solution (Python)</div><pre class="code">${esc(body.reference)}</pre>`;
+}
+
+
+// ---------- ADMIN: password reset + bulk upload ----------
+async function resetPassword(id, email){
+  const pw = prompt('Set a new password for '+email+' (min 4 characters):');
+  if(!pw) return;
+  const { status, body } = await apiPost('/api/admin/users/'+id+'/password', { password: pw });
+  toast(status===200 ? 'Password reset ✓' : (body.error||'Could not reset'));
+}
+function downloadTemplate(){
+  const csv = 'name,email,password,mobile,college,branch,year,batch\nRahul Sharma,rahul@abc.edu,pass1234,9876543210,ABC College,CSE,2027,\nPriya Patil,priya@abc.edu,,9876500000,ABC College,IT,2026,\n';
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
+  a.download = 'students-template.csv'; a.click();
+}
+async function bulkUpload(){
+  const el = document.getElementById('bulkresult');
+  const send = async (csv)=>{
+    if(!csv || !csv.trim()){ el.textContent='Please choose a file or paste CSV.'; return; }
+    el.textContent='Uploading…';
+    const { status, body } = await apiPost('/api/admin/students/bulk', { csv, defaultBatchId: val('bulk-batch') });
+    if(status!==200){ el.textContent = body.error||'Upload failed'; return; }
+    let msg = 'Added '+body.createdCount+' student(s).';
+    if(body.skipped && body.skipped.length) msg += ' Skipped '+body.skipped.length+': '+body.skipped.map(x=>x.email+' ('+x.reason+')').join('; ');
+    toast('Added '+body.createdCount+' students ✓');
+    renderStudents(); setTimeout(()=>{ const e=document.getElementById('bulkresult'); if(e) e.textContent=msg; }, 50);
+  };
+  const f = document.getElementById('bulk-file');
+  if(f.files && f.files[0]){ const r=new FileReader(); r.onload=()=>send(r.result); r.readAsText(f.files[0]); }
+  else send(val('bulk-text'));
+}
+
+
+// ---------- ADMIN: 100 DAYS EDITOR ----------
+async function renderAdminChallenge(){
+  stopTimer();
+  const list = await apiGet('/api/admin/challenge');
+  const rows = list.map(q=>`
+    <div class="card prow" onclick="editChallenge('${q.id}')">
+      <div><div class="t">Day ${q.day}: ${esc(q.title)}</div><div class="tags">${q.sampleCount} open, ${q.hiddenCount} hidden tests</div></div>
+      <span class="grow"></span>
+      <span class="pill ${pillClass(q.difficulty)}">${esc(q.difficulty)}</span>
+      <button class="btn btn-ghost">Edit →</button>
+    </div>`).join('');
+  app.innerHTML = `<h1>100 Days of Code — Manage</h1>
+    <p class="muted">Edit any day's statement, difficulty, test cases, or solution. Changes reflect immediately for students.</p>
+    <div class="plist" style="margin-top:14px">${rows}</div>`;
+}
+function caseInputs(arr){ return (arr||[]).map(c=>`<div class="caserow"><textarea class="io-in">${esc(c.input)}</textarea><textarea class="io-out">${esc(c.expected)}</textarea><button class="btn btn-ghost" onclick="this.closest('.caserow').remove()">✕</button></div>`).join(''); }
+async function editChallenge(id){
+  stopTimer();
+  const q = await apiGet('/api/admin/challenge/'+id);
+  app.innerHTML = `
+    <div class="test-top"><button class="btn btn-ghost" onclick="renderAdminChallenge()">← 100 Days</button></div>
+    <h1>Day ${q.day}: ${esc(q.title)}</h1><div id="cerr" class="err"></div>
+    <div class="card">
+      <div class="field"><label>Title</label><input id="c-title" value="${esc(q.title)}"></div>
+      <div class="split">
+        <div class="field"><label>Difficulty</label><select id="c-diff">${['easy','medium','hard'].map(x=>`<option ${x===q.difficulty?'selected':''}>${x}</option>`).join('')}</select></div>
+        <div class="field"><label>Answer checking</label><select id="c-checker">${['token','exact','float'].map(x=>`<option value="${x}" ${x===q.checker?'selected':''}>${x}</option>`).join('')}</select></div>
+      </div>
+      <div class="field"><label>Statement</label><textarea id="c-statement" style="height:130px">${esc(q.statement)}</textarea></div>
+      <div class="field"><label>Reference solution (Python)</label><textarea id="c-ref" class="editor" style="height:120px">${esc(q.reference)}</textarea></div>
+      <h2 style="margin-top:14px">Open (visible) test cases</h2><div id="csample-cases">${caseInputs(q.samples)}</div>
+      <button class="btn btn-ghost" onclick="document.getElementById('csample-cases').insertAdjacentHTML('beforeend', caseRowHTML())">+ Add open case</button>
+      <h2 style="margin-top:16px">Hidden test cases</h2><div id="chidden-cases">${caseInputs(q.hidden)}</div>
+      <button class="btn btn-ghost" onclick="document.getElementById('chidden-cases').insertAdjacentHTML('beforeend', caseRowHTML())">+ Add hidden case</button>
+      <div style="margin-top:16px"><button class="btn btn-primary" onclick="saveChallenge('${q.id}')">Save changes</button></div>
+    </div>`;
+}
+async function saveChallenge(id){
+  const collect=(sel)=>[...document.querySelectorAll('#'+sel+' .caserow')].map(r=>({input:r.querySelector('.io-in').value, expected:r.querySelector('.io-out').value}));
+  const payload={ title:val('c-title'), difficulty:val('c-diff'), checker:val('c-checker'),
+    statement:val('c-statement'), reference:val('c-ref'),
+    samples:collect('csample-cases'), hidden:collect('chidden-cases') };
+  const { status, body } = await apiPost('/api/admin/challenge/'+id, payload);
+  if(status!==200){ document.getElementById('cerr').textContent = body.error||'Could not save'; return; }
+  toast('Day saved ✓'); renderAdminChallenge();
+}
