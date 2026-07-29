@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS users (
 );
 CREATE TABLE IF NOT EXISTS submissions (
   id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, problem_id TEXT, title TEXT,
-  tags TEXT, language TEXT, score INTEGER, overall TEXT, at INTEGER
+  tags TEXT, language TEXT, score INTEGER, overall TEXT, at INTEGER, source TEXT, violations INTEGER
 );
 CREATE TABLE IF NOT EXISTS questions (
   id TEXT PRIMARY KEY, title TEXT, difficulty TEXT, tags TEXT, topic TEXT, statement TEXT,
@@ -28,6 +28,10 @@ CREATE TABLE IF NOT EXISTS questions (
   samples TEXT, hidden TEXT, reference TEXT, created_by TEXT, created_at INTEGER
 );
 CREATE TABLE IF NOT EXISTS batches (id TEXT PRIMARY KEY, name TEXT, college TEXT, branch TEXT, year_of_passing TEXT, created_at INTEGER);
+CREATE TABLE IF NOT EXISTS contests (
+  id TEXT PRIMARY KEY, title TEXT, description TEXT, start_at INTEGER, end_at INTEGER,
+  problem_ids TEXT, batch_ids TEXT, created_at INTEGER
+);
 CREATE TABLE IF NOT EXISTS challenge (
   id TEXT PRIMARY KEY, day INTEGER, title TEXT, difficulty TEXT, statement TEXT,
   time_limit_ms INTEGER, memory_mb INTEGER, checker TEXT, float_tolerance REAL,
@@ -42,6 +46,8 @@ CREATE TABLE IF NOT EXISTS tests (
 function addColumn(table, col, type){ try { db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`); } catch (e) {} }
 addColumn('users','mobile','TEXT'); addColumn('users','branch','TEXT'); addColumn('users','year_of_passing','TEXT');
 addColumn('batches','college','TEXT'); addColumn('batches','branch','TEXT'); addColumn('batches','year_of_passing','TEXT');
+addColumn('submissions','source','TEXT');
+addColumn('submissions','violations','INTEGER');
 
 const J = (v) => JSON.stringify(v == null ? [] : v);
 const P = (s) => { try { return JSON.parse(s || '[]'); } catch { return []; } };

@@ -14,16 +14,15 @@ function findProblem(id){ return require('./store').getById(id) || require('./ch
 const groups = require('./groups');
 const tests = require('./tests');
 const challenge = require('./challenge');
+const contests = require('./contests');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
 function detectLanguages() {
   const available = {};
-  for (const key of Object.keys(LANGUAGES)) {
-    const probe = { python: LANGUAGES.python.run[0] + ' --version', c: 'gcc --version',
-                    cpp: 'g++ --version', java: 'javac -version' }[key];
-    try { execSync(probe, { stdio: 'ignore' }); available[key] = true; } catch { available[key] = false; }
+  for (const [key, cfg] of Object.entries(LANGUAGES)) {
+    try { execSync(cfg.probe, { stdio: 'ignore' }); available[key] = true; } catch { available[key] = false; }
   }
   return available;
 }
@@ -109,11 +108,29 @@ async function handleApi(req, res, url) {
       timeLimitMs: q.timeLimitMs, memoryMb: q.memoryMb, checker: q.checker, floatTolerance: q.floatTolerance });
     if (isSubmit) {
       const feedback = buildFeedback2(q, result);
+      const flags = body.flags || {};
+      const violations = (Number(flags.tabSwitches) || 0) + (Number(flags.pasteAttempts) || 0);
       auth.addSubmission({ userId: me.id, problemId: q.id, title: q.title, tags: q.tags,
-        language: body.language, score: result.score, overall: result.overall, at: Date.now() });
+        language: body.language, score: result.score, overall: result.overall, at: Date.now(),
+        source: body.code || '', violations });
       return sendJSON(res, 200, { ...result, feedback });
     }
     return sendJSON(res, 200, result);
+  }
+
+  // ---- RUN AGAINST CUSTOM INPUT ----
+  if (req.method === 'POST' && url === '/api/run-custom') {
+    const me = currentUser(req); if (!me) return sendJSON(res, 401, { error: 'login required' });
+    const b = await readBody(req);
+    if (!AVAILABLE[b.language]) return sendJSON(res, 200, { overall: 'Language Unavailable',
+      note: `${LANGUAGES[b.language]?.label || b.language} is not installed on this server.` });
+    const result = await judge({ language: b.language, code: b.code || '',
+      testCases: [{ input: b.input || '', expected: '', hidden: false }],
+      timeLimitMs: 5000, memoryMb: 256, checker: 'exact' });
+    if (result.overall === 'Compilation Error')
+      return sendJSON(res, 200, { overall: 'Compilation Error', compileOutput: result.compileOutput });
+    const r = (result.results && result.results[0]) || {};
+    return sendJSON(res, 200, { overall: result.overall, output: r.got || '', stderr: r.stderr || '', timeMs: r.timeMs });
   }
 
   // ---- STUDENT DASHBOARD ----
@@ -126,6 +143,28 @@ async function handleApi(req, res, url) {
     const avg = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
     return sendJSON(res, 200, { totalSubmissions: subs.length, solved: scores.filter((s) => s === 100).length,
       avgScore: avg, problems: byProblem, recent: subs.slice(-8).reverse() });
+  }
+
+  // ---- GAMIFICATION ----
+  if (req.method === 'GET' && url === '/api/gamify') {
+    const me = currentUser(req); if (!me) return sendJSON(res, 401, { error: 'login required' });
+    const st = computeStats(me.id);
+    const students = auth.allUsers().filter((u) => u.role === 'student');
+    const ranked = students.map((u) => ({ id: u.id, xp: computeStats(u.id).xp })).sort((a, b) => b.xp - a.xp);
+    const rank = ranked.findIndex((r) => r.id === me.id) + 1;
+    const dnum = (Math.floor(Date.now() / 86400000) % 100) + 1;
+    const daily = challenge.getById('D' + String(dnum).padStart(3, '0'));
+    return sendJSON(res, 200, { ...st, badges: badgesFor(st), rank, totalStudents: students.length,
+      xpToNext: 100 - (st.xp % 100),
+      daily: daily ? { id: daily.id, title: daily.title, difficulty: daily.difficulty } : null });
+  }
+  if (req.method === 'GET' && url === '/api/leaderboard') {
+    const me = currentUser(req); if (!me) return sendJSON(res, 401, { error: 'login required' });
+    const students = auth.allUsers().filter((u) => u.role === 'student');
+    const rows = students.map((u) => { const st = computeStats(u.id);
+      return { name: u.name, batch: u.batch || '-', xp: st.xp, level: st.level, solved: st.solved, streak: st.streak }; })
+      .sort((a, b) => b.xp - a.xp).slice(0, 50);
+    return sendJSON(res, 200, { top: rows });
   }
 
   // ---- STUDENT: assigned tests / challenges ----
@@ -173,6 +212,24 @@ async function handleApi(req, res, url) {
     return sendJSON(res, 200, { id: t.id, title: t.title, description: t.description, questions: qs });
   }
 
+  // ---- CONTESTS (student) ----
+  if (req.method === 'GET' && url === '/api/contests') {
+    const me = currentUser(req); if (!me) return sendJSON(res, 401, { error: 'login required' });
+    const mine = contests.forBatch(me.batchId || '');
+    return sendJSON(res, 200, mine.map((c) => ({ id: c.id, title: c.title, description: c.description,
+      startAt: c.startAt, endAt: c.endAt, status: contests.status(c), problems: c.problemIds.length })));
+  }
+  const cdm = url.match(/^\/api\/contests\/([^/]+)$/);
+  if (req.method === 'GET' && cdm) {
+    const me = currentUser(req); if (!me) return sendJSON(res, 401, { error: 'login required' });
+    const c = contests.getById(cdm[1]); if (!c) return sendJSON(res, 404, { error: 'not found' });
+    const st = contests.status(c);
+    const probs = st === 'upcoming' ? [] : c.problemIds.map((pid) => { const q = store.getById(pid) || challenge.getById(pid);
+      return q ? { id: pid, title: q.title, difficulty: q.difficulty } : null; }).filter(Boolean);
+    return sendJSON(res, 200, { id: c.id, title: c.title, description: c.description, startAt: c.startAt, endAt: c.endAt,
+      status: st, problems: probs, standings: st === 'upcoming' ? [] : contestStandings(c) });
+  }
+
   // ---- STAFF RESULTS (admin sees all; sub-admin scoping added in later phase) ----
   if (req.method === 'GET' && url === '/api/faculty') {
     const me = currentUser(req);
@@ -212,9 +269,10 @@ async function handleApi(req, res, url) {
       for (const x of subs) byP[x.problemId] = Math.max(byP[x.problemId] || 0, x.score || 0);
       const vals = Object.values(byP);
       const avg = vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 0;
+      const flags = subs.reduce((a, x) => a + (x.violations || 0), 0);
       return { name: u.name, batchId: u.batchId || '', batch: u.batch || '(unassigned)',
         branch: u.branch || '(none)', year: u.yearOfPassing || '(none)',
-        avg, solved: vals.filter((v) => v === 100).length, attempts: subs.length };
+        avg, solved: vals.filter((v) => v === 100).length, attempts: subs.length, flags };
     });
     const groupBy = (keyFn, labelFn) => {
       const m = {};
@@ -233,7 +291,7 @@ async function handleApi(req, res, url) {
     const overallAvg = per.length ? Math.round(per.reduce((a, p) => a + p.avg, 0) / per.length) : 0;
     return sendJSON(res, 200, {
       scope,
-      summary: { students: per.length, active, avgScore: overallAvg, solvedTotal: per.reduce((a, p) => a + p.solved, 0) },
+      summary: { students: per.length, active, avgScore: overallAvg, solvedTotal: per.reduce((a, p) => a + p.solved, 0), flagged: per.filter((p) => p.flags > 0).length },
       byBatch: groupBy((p) => p.batchId || 'none', (p) => p.batch),
       byBranch: groupBy((p) => p.branch, (p) => p.branch),
       byYear: groupBy((p) => p.year, (p) => p.year),
@@ -416,10 +474,98 @@ async function handleApi(req, res, url) {
       return q ? sendJSON(res, 200, { ok: true, id: q.id }) : sendJSON(res, 404, { error: 'not found' });
     }
 
+    // ---- REPORTS ----
+    if (req.method === 'GET' && url === '/api/admin/reports') {
+      const students = auth.allUsers().filter((u) => u.role === 'student');
+      const subs = auth.allSubmissions();
+      const now = Date.now(), dayAgo = now - 86400000, weekAgo = now - 7 * 86400000;
+      const solveCount = {};
+      for (const x of subs) if (x.overall === 'Accepted') solveCount[x.title] = (solveCount[x.title] || 0) + 1;
+      const mostSolved = Object.entries(solveCount).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([title, count]) => ({ title, count }));
+      const top = students.map((u) => { const st = computeStats(u.id); return { name: u.name, xp: st.xp, solved: st.solved }; })
+        .sort((a, b) => b.xp - a.xp).slice(0, 10);
+      return sendJSON(res, 200, {
+        totalStudents: students.length,
+        activeToday: new Set(subs.filter((x) => x.at >= dayAgo).map((x) => x.userId)).size,
+        activeWeek: new Set(subs.filter((x) => x.at >= weekAgo).map((x) => x.userId)).size,
+        submissionsToday: subs.filter((x) => x.at >= dayAgo).length,
+        submissionsWeek: subs.filter((x) => x.at >= weekAgo).length,
+        totalSubmissions: subs.length, mostSolved, top,
+      });
+    }
+
+    // ---- CONTESTS (admin) ----
+    if (req.method === 'GET' && url === '/api/admin/contests') {
+      const bmap = Object.fromEntries(groups.list().map((b) => [b.id, b.name]));
+      return sendJSON(res, 200, contests.list().map((c) => ({ id: c.id, title: c.title, startAt: c.startAt,
+        endAt: c.endAt, status: contests.status(c), problems: c.problemIds.length,
+        batchNames: c.batchIds.map((id) => bmap[id]).filter(Boolean) })));
+    }
+    if (req.method === 'POST' && url === '/api/admin/contests') {
+      const b = await readBody(req);
+      try { const c = contests.create(b); return sendJSON(res, 200, { contest: { id: c.id, title: c.title } }); }
+      catch (e) { return sendJSON(res, 400, { error: e.message }); }
+    }
+    const ctm = url.match(/^\/api\/admin\/contests\/([^/]+)$/);
+    if (req.method === 'DELETE' && ctm) return sendJSON(res, 200, { ok: contests.remove(ctm[1]) });
+
     return sendJSON(res, 404, { error: 'no such admin endpoint' });
   }
 
   return sendJSON(res, 404, { error: 'no such endpoint' });
+}
+
+// ---- gamification helpers ----
+function difficultyOf(pid){ const q = store.getById(pid) || require('./challenge').getById(pid); return q ? q.difficulty : 'easy'; }
+function xpWeight(d){ return d === 'hard' ? 50 : d === 'medium' ? 25 : 10; }
+function dayKey(ms){ return new Date(ms).toISOString().slice(0, 10); }
+function computeStats(userId){
+  const subs = auth.userSubmissions(userId);
+  const accepted = subs.filter((s) => s.overall === 'Accepted');
+  const solvedSet = new Set(accepted.map((s) => s.problemId));
+  let xp = 0; for (const pid of solvedSet) xp += xpWeight(difficultyOf(pid));
+  const langs = new Set(subs.map((s) => s.language)).size;
+  const days = new Set(accepted.map((s) => dayKey(s.at)));
+  let streak = 0; const d = new Date();
+  if (!days.has(dayKey(d.getTime()))) d.setUTCDate(d.getUTCDate() - 1);
+  while (days.has(dayKey(d.getTime()))) { streak++; d.setUTCDate(d.getUTCDate() - 1); }
+  return { xp, level: 1 + Math.floor(xp / 100), solved: solvedSet.size, streak, langs, attempts: subs.length };
+}
+function badgesFor(st){
+  const b = [];
+  if (st.solved >= 1) b.push({ icon: '🎯', name: 'First Solve' });
+  if (st.solved >= 5) b.push({ icon: '🌱', name: 'Getting Started' });
+  if (st.solved >= 25) b.push({ icon: '⚔️', name: 'Problem Solver' });
+  if (st.solved >= 50) b.push({ icon: '🏅', name: 'Half Century' });
+  if (st.solved >= 100) b.push({ icon: '💯', name: 'Centurion' });
+  if (st.streak >= 3) b.push({ icon: '🔥', name: '3-Day Streak' });
+  if (st.streak >= 7) b.push({ icon: '🔥', name: '7-Day Streak' });
+  if (st.streak >= 30) b.push({ icon: '🏆', name: '30-Day Streak' });
+  if (st.langs >= 3) b.push({ icon: '🌐', name: 'Polyglot' });
+  return b;
+}
+
+// ---- contest standings (ICPC-style: solved desc, then penalty time asc) ----
+function contestStandings(c){
+  const nameById = Object.fromEntries(auth.allUsers().map((u) => [u.id, { name: u.name, batch: u.batch }]));
+  const inWindow = auth.allSubmissions().filter((x) => x.at >= c.startAt && x.at <= c.endAt && c.problemIds.includes(x.problemId));
+  const byUser = {};
+  for (const x of inWindow) { (byUser[x.userId] = byUser[x.userId] || []).push(x); }
+  const rows = [];
+  for (const [uid, subs] of Object.entries(byUser)) {
+    let solved = 0, penalty = 0;
+    for (const pid of c.problemIds) {
+      const ps = subs.filter((x) => x.problemId === pid).sort((a, b) => a.at - b.at);
+      let wrong = 0, done = false;
+      for (const x of ps) {
+        if (x.overall === 'Accepted') { solved++; penalty += Math.round((x.at - c.startAt) / 60000) + 20 * wrong; done = true; break; }
+        else wrong++;
+      }
+    }
+    const info = nameById[uid] || { name: 'Unknown', batch: '-' };
+    rows.push({ name: info.name, batch: info.batch || '-', solved, penalty });
+  }
+  return rows.sort((a, b) => b.solved - a.solved || a.penalty - b.penalty);
 }
 
 // feedback that works with a store question (has .reference)

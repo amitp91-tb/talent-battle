@@ -64,11 +64,11 @@ const endSession = (t) => sessions.delete(t);
 const userForToken = (t) => { const id = sessions.get(t); return id ? findById(id) : null; };
 
 function addSubmission(s) {
-  db.prepare(`INSERT INTO submissions (user_id,problem_id,title,tags,language,score,overall,at)
-    VALUES (?,?,?,?,?,?,?,?)`).run(s.userId, s.problemId, s.title, J(s.tags), s.language, s.score, s.overall, s.at);
+  db.prepare(`INSERT INTO submissions (user_id,problem_id,title,tags,language,score,overall,at,source,violations)
+    VALUES (?,?,?,?,?,?,?,?,?,?)`).run(s.userId, s.problemId, s.title, J(s.tags), s.language, s.score, s.overall, s.at, s.source || '', s.violations || 0);
 }
 const subRow = (r) => ({ userId: r.user_id, problemId: r.problem_id, title: r.title, tags: P(r.tags),
-  language: r.language, score: r.score, overall: r.overall, at: r.at });
+  language: r.language, score: r.score, overall: r.overall, at: r.at, violations: r.violations || 0 });
 const userSubmissions = (userId) => db.prepare('SELECT * FROM submissions WHERE user_id=? ORDER BY at').all(userId).map(subRow);
 const allSubmissions = () => db.prepare('SELECT * FROM submissions').all().map(subRow);
 

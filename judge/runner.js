@@ -37,7 +37,11 @@ function execWithLimits(cmd, args, { cwd, input = '', timeoutMs, memoryKb }) {
   return new Promise((resolve) => {
     // Wrap the real command in bash so we can apply "ulimit -v" (virtual memory,
     // in KB) to the child before it runs. "$0"/"$@" pass cmd + args through.
-    const wrapper = `ulimit -v ${memoryKb} 2>/dev/null; exec "$0" "$@"`;
+    // Floor at ~3 GB of VIRTUAL address space: VM-based runtimes (Node, JVM, Go)
+    // reserve a large virtual space at startup even though real RAM use is tiny.
+    // A low cap would kill them instantly. This still stops extreme runaway.
+    const vmemKb = Math.max(memoryKb, 3145728);
+    const wrapper = `ulimit -v ${vmemKb} 2>/dev/null; exec "$0" "$@"`;
     const child = spawn('bash', ['-c', wrapper, cmd, ...args], { cwd });
 
     let stdout = '';

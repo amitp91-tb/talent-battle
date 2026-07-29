@@ -12,6 +12,12 @@
     <div id="userbar"></div>
   </header>
   <main id="app"></main>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
+  <script>
+    window.__monaco=null;
+    try{ require.config({ paths:{ vs:'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs' }});
+      require(['vs/editor/editor.main'], function(){ window.__monaco=monaco; }); }catch(e){}
+  </script>
   <script src="/app.js"></script>
 </body>
 </html>
