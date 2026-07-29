@@ -9,7 +9,7 @@ function create({ title, description, startAt, durationMin, problemIds, batchIds
   if (!title) throw new Error('Contest title is required.');
   const start = Number(startAt); if (!start) throw new Error('Start time is required.');
   const end = start + (Number(durationMin) || 60) * 60000;
-  const c = { id: 'ct' + Date.now().toString(36), title, description: (description || '').trim(),
+  const c = { id: 'ct' + Date.now().toString(36) + Math.random().toString(36).slice(2,6), title, description: (description || '').trim(),
     start_at: start, end_at: end, problem_ids: J(problemIds || []), batch_ids: J(batchIds || []), created_at: Date.now() };
   db.prepare('INSERT INTO contests (id,title,description,start_at,end_at,problem_ids,batch_ids,created_at) VALUES (?,?,?,?,?,?,?,?)')
     .run(c.id, c.title, c.description, c.start_at, c.end_at, c.problem_ids, c.batch_ids, c.created_at);

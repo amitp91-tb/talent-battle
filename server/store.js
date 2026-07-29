@@ -57,7 +57,7 @@ function cleanCases(arr) {
             .filter((c) => c.input !== '' || c.expected !== '');
 }
 function createQuestion(input, createdBy) {
-  const q = { id: 'Q' + Date.now().toString(36), title: (input.title || 'Untitled').trim(),
+  const q = { id: 'Q' + Date.now().toString(36) + Math.random().toString(36).slice(2,6), title: (input.title || 'Untitled').trim(),
     difficulty: input.difficulty || 'easy',
     tags: Array.isArray(input.tags) ? input.tags : String(input.tags || '').split(',').map((s) => s.trim()).filter(Boolean),
     topic: input.topic || '', statement: input.statement || '',

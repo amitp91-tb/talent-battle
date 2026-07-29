@@ -7,7 +7,7 @@ const getById = (id) => rowToTest(db.prepare('SELECT * FROM tests WHERE id=?').g
 function create({ title, description, questionIds, batchIds }) {
   title = (title || '').trim();
   if (!title) throw new Error('Test title is required.');
-  const t = { id: 't' + Date.now().toString(36), title, description: (description || '').trim(),
+  const t = { id: 't' + Date.now().toString(36) + Math.random().toString(36).slice(2,6), title, description: (description || '').trim(),
     questionIds: Array.isArray(questionIds) ? questionIds : [], batchIds: Array.isArray(batchIds) ? batchIds : [], createdAt: Date.now() };
   db.prepare('INSERT INTO tests (id,title,description,question_ids,batch_ids,created_at) VALUES (?,?,?,?,?,?)')
     .run(t.id, t.title, t.description, J(t.questionIds), J(t.batchIds), t.createdAt);

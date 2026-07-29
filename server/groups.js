@@ -16,7 +16,7 @@ function create(input) {
   const name = composeName(input);
   if (!name) throw new Error('Provide at least a college, branch or year.');
   if (db.prepare('SELECT 1 FROM batches WHERE lower(name)=lower(?)').get(name)) throw new Error('A batch with this name already exists.');
-  const b = { id: 'b' + Date.now().toString(36), name, college, branch, yearOfPassing, created_at: Date.now() };
+  const b = { id: 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2,6), name, college, branch, yearOfPassing, created_at: Date.now() };
   db.prepare('INSERT INTO batches (id,name,college,branch,year_of_passing,created_at) VALUES (?,?,?,?,?,?)')
     .run(b.id, b.name, b.college, b.branch, b.yearOfPassing, b.created_at);
   return rowToBatch(db.prepare('SELECT * FROM batches WHERE id=?').get(b.id));

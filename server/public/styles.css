@@ -152,3 +152,73 @@ h1{ letter-spacing:-.01em; }
 
 /* proctoring badge */
 .proctor{ font-size:11.5px; color:var(--muted); background:#fff; border:1px solid var(--line); padding:4px 11px; border-radius:999px; }
+
+/* admin home hub */
+.hubsection{ margin-bottom:22px; }
+.hubsection h2{ font-size:15px; margin:0 0 12px; color:var(--ink); }
+.hubgrid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:14px; }
+.hubcard{ background:#fff; border:1px solid var(--line); border-radius:12px; padding:16px; box-shadow:0 1px 3px rgba(0,0,0,.04); display:flex; flex-direction:column; transition:transform .1s, box-shadow .15s; }
+.hubcard:hover{ transform:translateY(-2px); box-shadow:0 4px 12px rgba(0,0,0,.06); }
+.hubtitle{ font-weight:800; font-size:15px; }
+.hubdesc{ font-size:12.5px; color:var(--muted); margin:6px 0 14px; flex:1; line-height:1.45; }
+.hubactions{ display:flex; gap:8px; }
+
+/* ================= POLISH v2 — classy, cohesive ================= */
+:root{ --gold:#b8860b; --gold2:#9a7209; --ink:#26231d; --muted:#8a836f; --line:#e9e3d6; --bg:#faf7f0; }
+body{ font-family:'Inter',ui-sans-serif,system-ui,'Segoe UI',Roboto,sans-serif;
+  background:radial-gradient(1200px 600px at 80% -10%, #fff6e2 0%, transparent 60%), linear-gradient(180deg,#faf7f0,#f4efe4);
+  color:var(--ink); -webkit-font-smoothing:antialiased; }
+h1{ font-weight:800; letter-spacing:-.02em; } h2{ font-weight:700; letter-spacing:-.01em; }
+
+/* header + nav */
+header{ backdrop-filter:saturate(1.1); background:rgba(255,253,248,.9); border-bottom:1px solid var(--line);
+  flex-wrap:wrap; gap:10px; box-shadow:0 1px 12px rgba(120,90,20,.04); }
+.brand{ font-size:17px; letter-spacing:-.01em; }
+.logo{ width:24px; height:24px; border-radius:7px; background:linear-gradient(135deg,#d8a93a,var(--gold)); box-shadow:0 2px 6px rgba(184,134,11,.35); }
+#userbar{ flex-wrap:wrap; }
+nav{ display:flex; flex-wrap:wrap; gap:2px; background:#f1ead9; padding:3px; border-radius:12px; }
+nav button{ border:0; background:transparent; font-weight:600; font-size:12.5px; color:#6b6455; padding:7px 12px; border-radius:9px; transition:all .12s; }
+nav button:hover{ background:#fff; color:var(--ink); box-shadow:0 1px 3px rgba(0,0,0,.06); }
+.who{ font-weight:600; }
+
+/* cards */
+.card{ border-radius:14px; border-color:var(--line); box-shadow:0 1px 2px rgba(60,45,15,.04),0 6px 18px rgba(60,45,15,.03); }
+.card h2{ font-size:15px; }
+
+/* buttons */
+.btn{ font-weight:600; border-radius:10px; transition:transform .06s, box-shadow .15s, background .15s; }
+.btn:active{ transform:translateY(1px); }
+.btn-primary{ background:linear-gradient(135deg,#c8952a,var(--gold)); color:#fff; box-shadow:0 2px 8px rgba(184,134,11,.28); }
+.btn-primary:hover{ background:linear-gradient(135deg,#bd8a1f,var(--gold2)); box-shadow:0 4px 12px rgba(184,134,11,.35); }
+.btn-ghost{ background:#fff; border:1px solid var(--line); }
+.btn-ghost:hover{ background:#fbf8f1; border-color:#e0d8c4; }
+
+/* pills / badges */
+.pill{ font-weight:700; letter-spacing:.01em; }
+.pill-easy{ background:#e8f6ec; color:#2c7a3d; } .pill-medium{ background:#fdeed0; color:#93650a; } .pill-hard{ background:#fdeaea; color:#b23b3b; }
+
+/* inputs + focus ring */
+.field input, .field select, .filters input, .filters select, select, textarea, input[type=text], input[type=email], input[type=password]{
+  border-radius:10px; border:1px solid var(--line); transition:border-color .12s, box-shadow .12s; }
+.field input:focus, .field select:focus, .filters input:focus, .filters select:focus, select:focus, textarea:focus, input:focus{
+  outline:none; border-color:var(--gold); box-shadow:0 0 0 3px rgba(184,134,11,.15); }
+
+/* tables */
+table{ font-size:13px; } th{ font-weight:700; color:#8a836f; }
+td, th{ border-color:var(--line); }
+tbody tr:hover td, table tr:hover td{ background:#fbf8f1; }
+
+/* list rows */
+.prow{ border-radius:12px; } .prow .t{ font-weight:700; letter-spacing:-.01em; }
+
+/* hero refinement */
+.hero{ border-radius:16px; background:linear-gradient(120deg,#fff7e6,#fdeecd); border:1px solid #ecd9a7;
+  box-shadow:0 6px 20px rgba(184,134,11,.06); }
+
+/* auth screen */
+.authwrap{ box-shadow:0 10px 40px rgba(60,45,15,.08); border-radius:16px; }
+.auth-logo{ width:46px; height:46px; border-radius:13px; margin:0 auto; background:linear-gradient(135deg,#d8a93a,var(--gold)); box-shadow:0 4px 14px rgba(184,134,11,.35); }
+.authtabs button.active{ background:linear-gradient(135deg,#c8952a,var(--gold)); border-color:var(--gold); }
+
+/* stat + hub cards subtle */
+.statcard{ border-radius:14px; } .statval{ letter-spacing:-.02em; }

@@ -474,6 +474,12 @@ async function handleApi(req, res, url) {
       return q ? sendJSON(res, 200, { ok: true, id: q.id }) : sendJSON(res, 404, { error: 'not found' });
     }
 
+    // ---- LOAD DEMO DATA ----
+    if (req.method === 'POST' && url === '/api/admin/seed-demo') {
+      try { const r = require('./demo').seedDemo(); return sendJSON(res, 200, r); }
+      catch (e) { console.error(e); return sendJSON(res, 500, { error: String(e.message || e) }); }
+    }
+
     // ---- REPORTS ----
     if (req.method === 'GET' && url === '/api/admin/reports') {
       const students = auth.allUsers().filter((u) => u.role === 'student');

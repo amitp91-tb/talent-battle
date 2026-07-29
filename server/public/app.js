@@ -52,7 +52,8 @@ function renderAuth(mode){
   userbar.innerHTML = '';
   app.innerHTML = `
     <div class="authwrap card">
-      <h1 style="text-align:center">Welcome to Talent Battle</h1>
+      <div class="auth-logo"></div>
+      <h1 style="text-align:center;margin-top:6px">Welcome to Talent Battle</h1>
       <p class="muted" style="text-align:center;margin-top:0">Sign in to practice, get judged, and track your progress.</p>
       <div class="authtabs">
         <button id="tab-login" class="${mode==='login'?'active':''}" onclick="renderAuth('login')">Log in</button>
@@ -306,31 +307,41 @@ async function renderLeaderboard(){ stopTimer();
 // ---------- ADMIN HOME (overview) ----------
 async function renderAdminHome(){ stopTimer();
   const d = await apiGet('/api/admin/overview');
-  const stat=(label,val,onclick)=>`<div class="statcard" ${onclick?`onclick="${onclick}"`:'style="cursor:default"'}><div class="statval">${val}</div><div class="statlabel">${label}</div></div>`;
-  const recent = (d.recent||[]).map(r=>`<div class="actrow"><span>${esc(r.student)}</span><span class="muted">${esc(r.title)}</span><span class="pill ${r.overall==='Accepted'?'pill-easy':'pill-hard'}">${r.score}/100</span></div>`).join('') || '<p class="muted">No submissions yet.</p>';
+  const stat=(label,val)=>`<div class="statcard" style="cursor:default"><div class="statval">${val}</div><div class="statlabel">${label}</div></div>`;
+  const hub=(title,desc,openFn,newFn,newLabel)=>`<div class="hubcard"><div class="hubtitle">${title}</div><div class="hubdesc">${desc}</div><div class="hubactions"><button class="btn btn-ghost" onclick="${openFn}">Open</button>${newFn?`<button class="btn btn-primary" onclick="${newFn}">${newLabel||'+ New'}</button>`:''}</div></div>`;
   app.innerHTML = `
-    <div class="hero"><div><h1 style="margin:0">Welcome back, ${esc(ME.name.split(' ')[0])} 👋</h1>
-      <p class="muted" style="margin:4px 0 0">An overview of your platform.</p></div></div>
-    <div class="statgrid">
-      ${stat('Students',d.students,'renderStudents()')}
-      ${stat('Sub-Admins',d.subadmins,'renderSubadmins()')}
-      ${stat('Batches',d.batches,'renderBatches()')}
-      ${stat('Questions',d.questions,'renderAdminQuestions()')}
-      ${stat('Tests',d.tests,'renderAdminTests()')}
-      ${stat('Submissions',d.submissions,'renderFaculty()')}
+    <div class="hero">
+      <div><h1 style="margin:0">Welcome, ${esc(ME.name.split(' ')[0])} 👋</h1>
+        <p class="muted" style="margin:4px 0 0">Your control center — everything is organised below.</p></div>
+      <button class="btn btn-ghost" onclick="loadDemo(this)">✨ Load demo data</button>
     </div>
-    <div class="split" style="margin-top:16px">
-      <div class="card"><h2>Quick actions</h2>
-        <div class="qa">
-          <button class="btn btn-primary" onclick="renderQuestionForm()">+ New question</button>
-          <button class="btn btn-ghost" onclick="renderTestForm()">+ New test</button>
-          <button class="btn btn-ghost" onclick="renderStudents()">+ Add students</button>
-          <button class="btn btn-ghost" onclick="renderBatches()">+ New batch</button>
-          <button class="btn btn-ghost" onclick="renderSubadmins()">+ Sub-admin</button>
-        </div>
-      </div>
-      <div class="card"><h2>Recent activity</h2>${recent}</div>
-    </div>`;
+    <div class="statgrid" style="margin-bottom:20px">
+      ${stat('Students',d.students)}${stat('Sub-Admins',d.subadmins)}${stat('Batches',d.batches)}
+      ${stat('Questions',d.questions)}${stat('Tests',d.tests)}${stat('Submissions',d.submissions)}
+    </div>
+    <div class="hubsection"><h2>📚 Content — what students practise on</h2><div class="hubgrid">
+      ${hub('Question Bank','Your own coding questions with open + hidden test cases. Build Tests and Contests from these.','renderAdminQuestions()','renderQuestionForm()','+ New question')}
+      ${hub('100 Days of Code','A built-in Day 1 → Day 100 curriculum (easy → hard). Edit any day. This is separate from your Question Bank.','renderAdminChallenge()','','')}
+      ${hub('Tests','Bundle questions into a named test and assign it to specific batches (or everyone).','renderAdminTests()','renderTestForm()','+ New test')}
+      ${hub('Contests','Timed competitions with a live leaderboard, assigned to batches.','renderAdminContests()','renderContestForm()','+ New contest')}
+    </div></div>
+    <div class="hubsection"><h2>👥 People — admin → sub-admin → students</h2><div class="hubgrid">
+      ${hub('Batches','Student groups by college · branch · year of passing.','renderBatches()','','')}
+      ${hub('Students','Add students, bulk-upload via CSV, assign to batches, reset passwords.','renderStudents()','','')}
+      ${hub('Sub-Admins','Give faculty scoped access — each sub-admin sees only their assigned batches.','renderSubadmins()','','')}
+    </div></div>
+    <div class="hubsection"><h2>📊 Insights</h2><div class="hubgrid">
+      ${hub('Results & Analytics','Group-wise performance, proctoring flags, filter by batch/branch/year.','renderFaculty()','','')}
+      ${hub('Reports','Active users, most-solved problems, top students, one-click CSV export.','renderReports()','','')}
+    </div></div>`;
+}
+async function loadDemo(btn){
+  if(!confirm('Load demo data? This adds sample colleges, sub-admins, students, questions, tests and contests so you can explore. Safe to run once.')) return;
+  btn.textContent='Loading…'; btn.disabled=true;
+  const { body } = await apiPost('/api/admin/seed-demo', {});
+  btn.disabled=false; btn.textContent='✨ Load demo data';
+  toast(body.alreadySeeded ? 'Demo data already loaded' : 'Demo data loaded ✓');
+  renderAdminHome();
 }
 
 // ---------- FACULTY DASHBOARD ----------
