@@ -34,13 +34,18 @@ const Q = [
     reference:'input()\na=sorted(set(map(int,input().split())))\nprint(a[-2])', samples:[{input:'5\n5 3 1 4 2\n',expected:'4\n'}], hidden:[{input:'3\n9 8 7\n',expected:'8\n'},{input:'4\n1 2 3 4\n',expected:'3\n'}] },
 ];
 
+function loadDemoSol(){ try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'demo-solutions.json'), 'utf8')); } catch { return {}; } }
 function seedDemo() {
-  if (auth.findByEmail('prof.rao@demo.tb')) return { alreadySeeded: true };
+  const demoSol = loadDemoSol();
+  if (auth.findByEmail('prof.rao@demo.tb')) {
+    let n = 0; for (const q of Q) if (demoSol[q.title] && store.setSolutionsByTitle(q.title, demoSol[q.title])) n++;
+    return { alreadySeeded: true, solutionsUpdated: n };
+  }
   const b1 = groups.create({ college: 'ABC College', branch: 'CSE', yearOfPassing: '2027' });
   const b2 = groups.create({ college: 'ABC College', branch: 'IT', yearOfPassing: '2026' });
   const b3 = groups.create({ college: 'XYZ College', branch: 'CSE', yearOfPassing: '2027' });
 
-  const qids = Q.map((q) => store.createQuestion({ ...q, checker: 'token', tags: q.tags }, null).id);
+  const qids = Q.map((q) => store.createQuestion({ ...q, checker: 'token', tags: q.tags, solutions: demoSol[q.title] || (q.reference ? { python: q.reference } : {}) }, null).id);
 
   const mkSub = (name, email, batchIds) => { const u = auth.createUser({ name, email, password: 'demo1234', role: 'subadmin' });
     auth.updateUser(u.id, { assignedBatches: batchIds }); return u; };

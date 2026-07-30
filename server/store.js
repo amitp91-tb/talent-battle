@@ -83,5 +83,11 @@ function createQuestion(input, createdBy) {
   insert(q); return q;
 }
 const deleteQuestion = (id) => db.prepare('DELETE FROM questions WHERE id=?').run(id).changes > 0;
+function setSolutionsByTitle(title, solutions){
+  const r = db.prepare('SELECT id FROM questions WHERE title=?').get(title);
+  if(!r) return false;
+  db.prepare('UPDATE questions SET solutions=?, reference=? WHERE id=?').run(JSON.stringify(solutions||{}), (solutions&&solutions.python)||'', r.id);
+  return true;
+}
 
-module.exports = { listPublic, getById, getPublic, toTestCases, listAdmin, getAdmin: getById, createQuestion, deleteQuestion };
+module.exports = { listPublic, getById, getPublic, toTestCases, listAdmin, getAdmin: getById, createQuestion, deleteQuestion, setSolutionsByTitle };

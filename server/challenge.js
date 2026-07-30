@@ -14,6 +14,21 @@ if (db.prepare('SELECT COUNT(*) c FROM challenge').get().c === 0) {
     d.memoryMb || 256, d.checker || 'token', d.floatTolerance ?? null, J(d.samples || []), J(d.hidden || []), d.reference || '');
 }
 
+// Backfill solutions from challenge-days.json into rows missing them (idempotent).
+try {
+  const seed = JSON.parse(fs.readFileSync(path.join(__dirname, 'challenge-days.json'), 'utf8'));
+  const getRow = db.prepare('SELECT solutions FROM challenge WHERE id=?');
+  const upd = db.prepare('UPDATE challenge SET solutions=? WHERE id=?');
+  for (const d of seed) {
+    if (!d.solutions) continue;
+    const row = getRow.get(d.id); if (!row) continue;
+    let cur = {}; try { cur = JSON.parse(row.solutions || '{}'); } catch {}
+    let changed = false;
+    for (const k of Object.keys(d.solutions)) if (!cur[k]) { cur[k] = d.solutions[k]; changed = true; }
+    if (changed) upd.run(JSON.stringify(cur), d.id);
+  }
+} catch (e) {}
+
 function rowToQ(r) {
   if (!r) return null;
   return { id: r.id, day: r.day, title: r.title, difficulty: r.difficulty, statement: r.statement,
