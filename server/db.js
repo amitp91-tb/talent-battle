@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS submissions (
 CREATE TABLE IF NOT EXISTS questions (
   id TEXT PRIMARY KEY, title TEXT, difficulty TEXT, tags TEXT, topic TEXT, statement TEXT,
   time_limit_ms INTEGER, memory_mb INTEGER, checker TEXT, float_tolerance REAL, points INTEGER,
-  samples TEXT, hidden TEXT, reference TEXT, time_complexity TEXT, space_complexity TEXT, solutions TEXT, created_by TEXT, created_at INTEGER
+  samples TEXT, hidden TEXT, reference TEXT, time_complexity TEXT, space_complexity TEXT, solutions TEXT, mode TEXT, harness TEXT, created_by TEXT, created_at INTEGER
 );
 CREATE TABLE IF NOT EXISTS batches (id TEXT PRIMARY KEY, name TEXT, college TEXT, branch TEXT, year_of_passing TEXT, created_at INTEGER);
 CREATE TABLE IF NOT EXISTS contests (
@@ -49,6 +49,7 @@ addColumn('batches','college','TEXT'); addColumn('batches','branch','TEXT'); add
 addColumn('submissions','source','TEXT');
 addColumn('submissions','violations','INTEGER');
 addColumn('questions','time_complexity','TEXT'); addColumn('questions','space_complexity','TEXT'); addColumn('questions','solutions','TEXT');
+addColumn('questions','mode','TEXT'); addColumn('questions','harness','TEXT');
 addColumn('challenge','time_complexity','TEXT'); addColumn('challenge','space_complexity','TEXT'); addColumn('challenge','solutions','TEXT');
 
 const J = (v) => JSON.stringify(v == null ? [] : v);

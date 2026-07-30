@@ -228,3 +228,9 @@ tbody tr:hover td, table tr:hover td{ background:#fbf8f1; }
 .cxbadge{ font-size:12px; background:#f4f0e6; border:1px solid var(--line); padding:4px 11px; border-radius:999px; font-weight:600; }
 .io code{ font-family:ui-monospace,monospace; }
 code{ background:#f4f0e6; padding:1px 5px; border-radius:5px; font-family:ui-monospace,monospace; font-size:.92em; }
+
+/* exam mode */
+.exambar{ background:#b23b3b; color:#fff; text-align:center; font-weight:700; font-size:13px; padding:9px; border-radius:10px; margin-bottom:12px; box-shadow:0 2px 8px rgba(178,59,59,.25); }
+.examgate{ min-height:62vh; display:flex; align-items:center; justify-content:center; }
+.examgate-card{ background:#fff; border:1px solid var(--line); border-radius:16px; padding:30px; max-width:470px; text-align:center; box-shadow:0 12px 44px rgba(60,45,15,.12); }
+.examrules{ text-align:left; font-size:13px; color:#4a463d; margin:14px auto 20px; line-height:1.7; max-width:360px; }

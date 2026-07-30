@@ -4,6 +4,8 @@ const groups = require('./groups');
 const store = require('./store');
 const tests = require('./tests');
 const contests = require('./contests');
+const fs = require('fs');
+const path = require('path');
 
 const Q = [
   { title:'Add Two Numbers', difficulty:'easy', tags:['math'], statement:'Read two integers A and B on one line. Print A+B.',
@@ -68,4 +70,13 @@ function seedDemo() {
 
   return { batches: 3, subadmins: 3, students: S.length, questions: qids.length, tests: 2, contests: 2 };
 }
-module.exports = { seedDemo };
+function seedFunctionExamples() {
+  const existing = store.listAdmin().some((q) => q.title === 'Sum of Two Numbers (function)');
+  if (existing) return { alreadySeeded: true };
+  let problems = [];
+  try { problems = JSON.parse(fs.readFileSync(path.join(__dirname, 'fn-examples.json'), 'utf8')); } catch (e) { return { error: 'fn-examples.json missing' }; }
+  let n = 0;
+  for (const q of problems) { store.createQuestion(q, null); n++; }
+  return { added: n };
+}
+module.exports = { seedDemo, seedFunctionExamples };

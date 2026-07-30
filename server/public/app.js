@@ -1,7 +1,7 @@
 // app.js — single-page app with login accounts (students + faculty).
 const app = document.getElementById('app');
 const userbar = document.getElementById('userbar');
-let ME = null, LANGS = { available:{}, labels:{} }, PROBLEMS = [], timer = null, contestTimer = null;
+let ME = null, LANGS = { available:{}, labels:{} }, PROBLEMS = [], timer = null, contestTimer = null, examMode = false, examSession = false;
 
 const starters = {
   python: "# Read all input, then print your answer.\nimport sys\ndata = sys.stdin.read().split()\n\n# TODO: compute the answer from `data`\nprint(\"your answer here\")",
@@ -28,8 +28,9 @@ function toast(msg){
   clearTimeout(t._t); t._t=setTimeout(()=>{ t.style.opacity='0'; }, 1800);
 }
 function pillClass(d){ return d==='easy'?'pill-easy':(d==='hard'?'pill-hard':'pill-medium'); }
-function stopTimer(){ if(timer){ clearInterval(timer); timer=null; } if(contestTimer){ clearInterval(contestTimer); contestTimer=null; } disposeEditor(); stopProctor(); }
-let mona=null;
+function stopTimer(){ if(timer){ clearInterval(timer); timer=null; } if(contestTimer){ clearInterval(contestTimer); contestTimer=null; } disposeEditor(); stopProctor(); stopExam(); }
+let mona=null; let curProblem=null;
+function starterFor(lang){ if(curProblem&&curProblem.meta&&curProblem.meta.mode==='function'&&curProblem.starters&&curProblem.starters[lang]!=null) return curProblem.starters[lang]; return starters[lang]||''; }
 const monLang={python:'python',cpp:'cpp',c:'c',java:'java',javascript:'javascript',bash:'shell',go:'go',ruby:'ruby',php:'php',rust:'rust'};
 function disposeEditor(){ if(mona){ try{mona.dispose();}catch(e){} mona=null; } }
 function mountEditor(code,lang){
@@ -158,8 +159,13 @@ const firstAvailableLang = () => Object.keys(LANGS.available).find(k=>LANGS.avai
 function renderTest(d){
   stopTimer();
   const samplesHtml = (d.samples||[]).map((sm,i)=>`<div class="io"><b>Example ${i+1} · Input</b>${esc((sm.input||'').trim())}</div><div class="io"><b>Example ${i+1} · Output</b>${esc((sm.expected||'').trim())}</div>`).join('') || '<p class="muted">No public examples.</p>';
-  const startLang = firstAvailableLang();
+  curProblem = d;
+  const fnMode = !!(d.meta && d.meta.mode==='function');
+  const availLangs = (fnMode ? (d.functionLangs||[]) : Object.keys(LANGS.labels)).filter(k=>LANGS.available[k]);
+  const startLang = availLangs[0] || firstAvailableLang();
+  const langOpts = (availLangs.length?availLangs:Object.keys(LANGS.labels).filter(k=>LANGS.available[k])).map(k=>`<option value="${k}">${esc(LANGS.labels[k]||k)}</option>`).join('');
   app.innerHTML = `
+    ${examMode?'<div class="exambar">🔒 Exam in progress — stay in full screen &amp; do not switch tabs. Violations are recorded.</div>':''}
     <div class="test-top">
       <button class="btn btn-ghost" onclick="renderList()">← Problems</button>
       <span class="proctor" id="proctor-badge">Proctoring: on</span>
@@ -176,7 +182,7 @@ function renderTest(d){
       </div>
       <div class="card">
         <div class="toolbar">
-          <select id="lang" onchange="onLangChange()">${langOptions()}</select>
+          <select id="lang" onchange="onLangChange()">${langOpts}</select>
           <span class="grow"></span>
           <button class="btn btn-ghost" onclick="doRun('${d.meta.id}')">▷ Run</button>
           <button class="btn btn-primary" onclick="doSubmit('${d.meta.id}')">Submit</button>
@@ -198,8 +204,9 @@ function renderTest(d){
     </div>`;
   document.getElementById('lang').value = startLang;
   const ef=document.getElementById('editor-file'); if(ef) ef.textContent = fileFor[startLang]||'main';
-  mountEditor(starters[startLang], startLang);
+  mountEditor(starterFor(startLang), startLang);
   startTimer(); startProctor(); updateProctorBadge();
+  if(examMode) startExam();
 }
 function renderStatement(md){
   let x = esc(md||'');
@@ -224,7 +231,9 @@ function renderSolutions(solutions, tc, sc){
 const fileFor={python:'main.py',cpp:'main.cpp',c:'main.c',java:'Main.java',javascript:'main.js',bash:'main.sh',go:'main.go',ruby:'main.rb',php:'main.php',rust:'main.rs'};
 function onLangChange(){ const k=document.getElementById('lang').value;
   const cur=getCode().trim();
-  if(Object.values(starters).includes(cur)||cur==='') setCode(starters[k]);
+  const known=Object.values(starters).map(x=>String(x).trim());
+  if(curProblem&&curProblem.starters) known.push(...Object.values(curProblem.starters).map(x=>String(x).trim()));
+  if(known.includes(cur)||cur==='') setCode(starterFor(k));
   setEditorLang(k);
   const ef=document.getElementById('editor-file'); if(ef) ef.textContent=fileFor[k]||'main'; }
 function startTimer(){ let t=30*60; timer=setInterval(()=>{ if(t>0)t--; const m=Math.floor(t/60),s=t%60;
@@ -327,7 +336,10 @@ async function renderAdminHome(){ stopTimer();
     <div class="hero">
       <div><h1 style="margin:0">Welcome, ${esc(ME.name.split(' ')[0])} 👋</h1>
         <p class="muted" style="margin:4px 0 0">Your control center — everything is organised below.</p></div>
-      <button class="btn btn-ghost" onclick="loadDemo(this)">✨ Load demo data</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-ghost" onclick="loadDemo(this)">✨ Load demo data</button>
+        <button class="btn btn-ghost" onclick="loadFunctions(this)">ƒ Load function examples</button>
+      </div>
     </div>
     <div class="statgrid" style="margin-bottom:20px">
       ${stat('Students',d.students)}${stat('Sub-Admins',d.subadmins)}${stat('Batches',d.batches)}
@@ -348,6 +360,14 @@ async function renderAdminHome(){ stopTimer();
       ${hub('Results & Analytics','Group-wise performance, proctoring flags, filter by batch/branch/year.','renderFaculty()','','')}
       ${hub('Reports','Active users, most-solved problems, top students, one-click CSV export.','renderReports()','','')}
     </div></div>`;
+}
+async function loadFunctions(btn){
+  if(!confirm('Add 4 ready-made function-mode example problems (Python/C++/Java/JavaScript drivers included)? Use these as templates.')) return;
+  btn.textContent='Loading…'; btn.disabled=true;
+  const { body } = await apiPost('/api/admin/seed-functions', {});
+  btn.disabled=false; btn.textContent='ƒ Load function examples';
+  toast(body.alreadySeeded ? 'Function examples already loaded' : (body.error ? body.error : 'Function examples added ✓'));
+  renderAdminHome();
 }
 async function loadDemo(btn){
   if(!confirm('Load demo data? This adds sample colleges, sub-admins, students, questions, tests and contests so you can explore. Safe to run once.')) return;
@@ -469,12 +489,18 @@ function renderQuestionForm(){
         <div class="field"><label>Tags (comma-separated)</label><input id="q-tags" placeholder="dsa, arrays"></div>
         <div class="field"><label>Topic</label><input id="q-topic" placeholder="Basic DSA"></div>
       </div>
+      <div class="field"><label>Problem type</label>
+        <select id="q-mode" onchange="toggleQMode()">
+          <option value="stdio">Standard — student reads input &amp; prints output</option>
+          <option value="function">Function-based — student writes only the function (input handled automatically)</option>
+        </select></div>
       <div class="split">
         <div class="field"><label>Time limit (ms)</label><input id="q-time" value="2000"></div>
         <div class="field"><label>Memory (MB)</label><input id="q-mem" value="256"></div>
       </div>
       <div class="field"><label>Problem statement</label>
-        <textarea id="q-statement" style="height:120px" placeholder="Describe the problem, the input format, the output format, and an example."></textarea></div>
+        <textarea id="q-statement" style="height:120px" placeholder="Describe the problem, the input format, the output format, and an example."></textarea>
+        <button class="btn btn-ghost" type="button" style="margin-top:6px" onclick="uploadImage('q-statement')">📷 Upload image</button></div>
       <div class="split">
         <div class="field"><label>Time complexity (e.g. O(n))</label><input id="q-tc" placeholder="O(n)"></div>
         <div class="field"><label>Space complexity (e.g. O(1))</label><input id="q-sc" placeholder="O(1)"></div>
@@ -485,6 +511,16 @@ function renderQuestionForm(){
       <div class="field"><label>Java (optional)</label><textarea id="sol-java" class="editor" style="height:90px"></textarea></div>
       <div class="field"><label>JavaScript (optional)</label><textarea id="sol-javascript" class="editor" style="height:90px"></textarea></div>
 
+      <div id="harness-section" style="display:none">
+        <h2 style="margin-top:16px">Function harness <span class="muted" style="font-size:12px">(per language)</span></h2>
+        <p class="muted" style="margin-top:0">For each language you support: <b>Starter</b> = the stub the student edits; <b>Driver</b> = hidden code that reads the input, calls their function, and prints the result — put <code>{{SOLUTION}}</code> where the student's code goes.</p>
+        ${['python','cpp','java','javascript'].map(l=>`
+          <div class="card" style="margin-bottom:10px;background:#fbf8f1">
+            <div style="font-weight:700;margin-bottom:6px">${l}</div>
+            <div class="field"><label>Starter (student sees)</label><textarea id="hs-${l}" class="editor" style="height:80px"></textarea></div>
+            <div class="field"><label>Driver (hidden — must contain {{SOLUTION}})</label><textarea id="hd-${l}" class="editor" style="height:90px"></textarea></div>
+          </div>`).join('')}
+      </div>
       <h2 style="margin-top:16px">Public (visible) test cases <span class="muted" style="font-size:12px">— minimum 2</span></h2>
       <p class="muted" style="margin-top:0">Students can see these examples.</p>
       <div id="sample-cases"></div>
@@ -500,13 +536,20 @@ function renderQuestionForm(){
   addCase('sample'); addCase('sample');
   for(let i=0;i<5;i++) addCase('hidden');
 }
+function toggleQMode(){ const h=document.getElementById('harness-section'); if(h) h.style.display = val('q-mode')==='function'?'block':'none'; }
 async function submitQuestion(){
+  const mode=val('q-mode'); let harness={};
+  if(mode==='function'){ for(const l of ['python','cpp','java','javascript']){ const st=val('hs-'+l), dr=val('hd-'+l);
+    if(st&&st.trim() && dr&&dr.trim()) harness[l]={starter:st, driver:dr}; }
+    if(!Object.keys(harness).length){ document.getElementById('qerr').textContent='Add a starter + driver for at least one language.'; return; }
+  }
   const solutions={}; for(const k of ['python','cpp','java','javascript']){ const v=val('sol-'+k); if(v && v.trim()) solutions[k]=v; }
   const payload = {
     title: val('q-title'), difficulty: val('q-diff'), checker: val('q-checker'),
     tags: val('q-tags'), topic: val('q-topic'), timeLimitMs: val('q-time'), memoryMb: val('q-mem'),
     statement: val('q-statement'), reference: solutions.python || '', solutions,
     timeComplexity: val('q-tc'), spaceComplexity: val('q-sc'),
+    mode, harness,
     samples: collectCases('sample'), hidden: collectCases('hidden') };
   const { status, body } = await apiPost('/api/admin/questions', payload);
   if(status!==200){ document.getElementById('qerr').textContent = body.error || 'Could not create question'; return; }
@@ -712,7 +755,7 @@ async function renderStudentTests(){
 async function openTest(id){
   const t = await apiGet('/api/tests/'+id);
   const rows = (t.questions||[]).map(q=>`
-    <div class="card prow" onclick="openProblem('${q.id}')">
+    <div class="card prow" onclick="openExamProblem('${q.id}')">
       <div><div class="t">${esc(q.title)}</div><div class="tags">${esc((q.tags||[]).join(' · '))}</div></div>
       <span class="grow"></span><span class="pill ${pillClass(q.difficulty)}">${esc(q.difficulty)}</span>
       <button class="btn btn-ghost">Solve →</button>
@@ -813,7 +856,8 @@ async function editChallenge(id){
         <div class="field"><label>Difficulty</label><select id="c-diff">${['easy','medium','hard'].map(x=>`<option ${x===q.difficulty?'selected':''}>${x}</option>`).join('')}</select></div>
         <div class="field"><label>Answer checking</label><select id="c-checker">${['token','exact','float'].map(x=>`<option value="${x}" ${x===q.checker?'selected':''}>${x}</option>`).join('')}</select></div>
       </div>
-      <div class="field"><label>Statement</label><textarea id="c-statement" style="height:130px">${esc(q.statement)}</textarea></div>
+      <div class="field"><label>Statement</label><textarea id="c-statement" style="height:130px">${esc(q.statement)}</textarea>
+        <button class="btn btn-ghost" type="button" style="margin-top:6px" onclick="uploadImage('c-statement')">📷 Upload image</button></div>
       <div class="field"><label>Reference solution (Python)</label><textarea id="c-ref" class="editor" style="height:120px">${esc(q.reference)}</textarea></div>
       <h2 style="margin-top:14px">Open (visible) test cases</h2><div id="csample-cases">${caseInputs(q.samples)}</div>
       <button class="btn btn-ghost" onclick="document.getElementById('csample-cases').insertAdjacentHTML('beforeend', caseRowHTML())">+ Add open case</button>
@@ -923,7 +967,7 @@ async function renderContests(){
 async function openContest(id){
   stopTimer();
   const c=await apiGet('/api/contests/'+id); lastStandings=(c.standings||[]);
-  const probs=(c.problems||[]).map((p,i)=>`<div class="card prow" onclick="openProblem('${p.id}')">
+  const probs=(c.problems||[]).map((p,i)=>`<div class="card prow" onclick="openExamProblem('${p.id}')">
       <div><div class="t">${String.fromCharCode(65+i)}. ${esc(p.title)}</div></div>
       <span class="grow"></span><span class="pill ${pillClass(p.difficulty)}">${esc(p.difficulty)}</span><button class="btn btn-ghost">Solve →</button></div>`).join('') || '<p class="muted">Problems unlock when the contest starts.</p>';
   const stand=(c.standings||[]).map((r,i)=>`<tr><td>${i+1}</td><td>${esc(r.name)}</td><td>${esc(r.batch)}</td><td>${r.solved}</td><td>${r.penalty}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">No submissions yet.</td></tr>';
@@ -983,4 +1027,64 @@ async function renderReports(){ stopTimer();
       <div class="card"><h2>Most-solved problems</h2>${most}</div>
       <div class="card"><h2>Top students (by XP)</h2>${top}</div>
     </div>`;
+}
+
+
+// ---------- EXAM MODE (fullscreen lockdown for tests & contests) ----------
+async function openExamProblem(id){
+  stopTimer();
+  let r=await fetch('/api/problems/'+id); if(!r.ok) r=await fetch('/api/challenge/'+id);
+  if(!r.ok){ toast('Problem not found'); return; }
+  const d=await r.json(); window.__examDetail=d;
+  app.innerHTML=`<div class="examgate"><div class="examgate-card">
+    <div class="auth-logo"></div>
+    <h1 style="margin:12px 0 2px">Proctored Test</h1>
+    <p class="muted" style="margin:0">${esc(d.meta.title)}</p>
+    <ul class="examrules">
+      <li>The test opens in <b>full screen</b>.</li>
+      <li><b>Do not switch tabs</b> or exit full screen — each time is recorded.</li>
+      <li>Leaving or closing the page is logged and reported to your admin.</li>
+      <li>Submitting ends the test.</li>
+    </ul>
+    <button class="btn btn-primary" onclick="beginExam()">Start Test in Full Screen</button>
+    <button class="btn btn-ghost" style="margin-left:8px" onclick="history.length>1?history.back():renderList()">Cancel</button>
+  </div></div>`;
+}
+function beginExam(){
+  const el=document.documentElement;
+  const req=el.requestFullscreen||el.webkitRequestFullscreen||el.msRequestFullscreen;
+  if(req){ try{ req.call(el); }catch(e){} }
+  examMode=true;
+  renderTest(window.__examDetail);
+}
+function startExam(){
+  examSession=true;
+  document.addEventListener('fullscreenchange', onFsChange);
+  window.addEventListener('beforeunload', onExamUnload);
+  document.addEventListener('contextmenu', preventCtx);
+}
+function stopExam(){
+  if(!examSession && !examMode){ return; }
+  examSession=false; examMode=false;
+  document.removeEventListener('fullscreenchange', onFsChange);
+  window.removeEventListener('beforeunload', onExamUnload);
+  document.removeEventListener('contextmenu', preventCtx);
+  try{ if(document.fullscreenElement && document.exitFullscreen) document.exitFullscreen(); }catch(e){}
+}
+function onFsChange(){ if(examSession && !document.fullscreenElement){ proctor.tab++; updateProctorBadge(); toast('⚠ You left full screen — recorded'); } }
+function onExamUnload(e){ if(examSession){ e.preventDefault(); e.returnValue=''; return ''; } }
+function preventCtx(e){ if(examSession) e.preventDefault(); }
+
+// ---------- IMAGE UPLOAD ----------
+function uploadImage(targetId){
+  const inp=document.createElement('input'); inp.type='file'; inp.accept='image/*';
+  inp.onchange=()=>{ const f=inp.files&&inp.files[0]; if(!f) return;
+    if(f.size>2*1024*1024){ toast('Image too large (max 2 MB)'); return; }
+    const rd=new FileReader(); rd.onload=async()=>{
+      const { status, body } = await apiPost('/api/admin/upload', { dataUrl: rd.result });
+      if(status!==200){ toast(body.error||'Upload failed'); return; }
+      const ta=document.getElementById(targetId); if(ta){ ta.value += (ta.value.endsWith('\n')||!ta.value?'':'\n')+'![image]('+body.url+')\n'; }
+      toast('Image inserted ✓');
+    }; rd.readAsDataURL(f); };
+  inp.click();
 }

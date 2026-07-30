@@ -18,6 +18,8 @@ const contests = require('./contests');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
+const UPLOADS = path.join(process.env.TB_DATA || path.join(__dirname, 'data'), 'uploads');
+try { if (!fs.existsSync(UPLOADS)) fs.mkdirSync(UPLOADS, { recursive: true }); } catch (e) {}
 
 function detectLanguages() {
   const available = {};
@@ -47,7 +49,7 @@ const cookieHeader = (t) => ({ 'Set-Cookie': `tb_session=${t}; HttpOnly; Path=/;
 const isAdmin = (u) => u && u.role === 'admin';
 const isStaff = (u) => u && (u.role === 'admin' || u.role === 'subadmin');
 
-const MIME = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.json': 'application/json', '.svg': 'image/svg+xml' };
+const MIME = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' };
 function serveStatic(res, urlPath) {
   let file = urlPath === '/' ? '/index.html' : urlPath;
   const full = path.join(PUBLIC_DIR, path.normalize(file).replace(/^(\.\.[/\\])+/, ''));
@@ -104,7 +106,11 @@ async function handleApi(req, res, url) {
       results: [], note: `${LANGUAGES[body.language]?.label || body.language} is not installed on this machine.` });
     const all = store.toTestCases(q);
     const cases = isSubmit ? all : all.filter((t) => !t.hidden);
-    const result = await judge({ language: body.language, code: body.code || '', testCases: cases,
+    let effCode = body.code || '';
+    if (q.mode === 'function' && q.harness && q.harness[body.language] && q.harness[body.language].driver) {
+      effCode = String(q.harness[body.language].driver).replace('{{SOLUTION}}', body.code || '');
+    }
+    const result = await judge({ language: body.language, code: effCode, testCases: cases,
       timeLimitMs: q.timeLimitMs, memoryMb: q.memoryMb, checker: q.checker, floatTolerance: q.floatTolerance });
     if (isSubmit) {
       const feedback = buildFeedback2(q, result);
@@ -477,9 +483,26 @@ async function handleApi(req, res, url) {
       return q ? sendJSON(res, 200, { ok: true, id: q.id }) : sendJSON(res, 404, { error: 'not found' });
     }
 
+    // ---- IMAGE UPLOAD ----
+    if (req.method === 'POST' && url === '/api/admin/upload') {
+      const b = await readBody(req);
+      const m = /^data:image\/(png|jpe?g|gif|webp);base64,(.+)$/.exec(b.dataUrl || '');
+      if (!m) return sendJSON(res, 400, { error: 'Only PNG, JPG, GIF or WebP images are allowed.' });
+      const buf = Buffer.from(m[2], 'base64');
+      if (buf.length > 2 * 1024 * 1024) return sendJSON(res, 400, { error: 'Image too large (max 2 MB).' });
+      const ext = m[1] === 'jpeg' ? 'jpg' : m[1];
+      const name = 'img_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6) + '.' + ext;
+      try { fs.writeFileSync(path.join(UPLOADS, name), buf); } catch (e) { return sendJSON(res, 500, { error: 'Could not save image.' }); }
+      return sendJSON(res, 200, { url: '/uploads/' + name });
+    }
+
     // ---- LOAD DEMO DATA ----
     if (req.method === 'POST' && url === '/api/admin/seed-demo') {
       try { const r = require('./demo').seedDemo(); return sendJSON(res, 200, r); }
+      catch (e) { console.error(e); return sendJSON(res, 500, { error: String(e.message || e) }); }
+    }
+    if (req.method === 'POST' && url === '/api/admin/seed-functions') {
+      try { const r = require('./demo').seedFunctionExamples(); return sendJSON(res, 200, r); }
       catch (e) { console.error(e); return sendJSON(res, 500, { error: String(e.message || e) }); }
     }
 
@@ -594,6 +617,11 @@ function buildFeedback2(q, result) {
 const server = http.createServer((req, res) => {
   const url = req.url.split('?')[0];
   if (url.startsWith('/api/')) return handleApi(req, res, url).catch((e) => { console.error(e); sendJSON(res, 500, { error: String(e) }); });
+  if (url.startsWith('/uploads/')) {
+    const f = path.join(UPLOADS, path.basename(decodeURIComponent(url)));
+    if (f.startsWith(UPLOADS) && fs.existsSync(f)) { res.writeHead(200, { 'Content-Type': MIME[path.extname(f).toLowerCase()] || 'application/octet-stream', 'Cache-Control': 'public, max-age=86400' }); return fs.createReadStream(f).pipe(res); }
+    res.writeHead(404); return res.end('not found');
+  }
   return serveStatic(res, url);
 });
 server.listen(PORT, () => {

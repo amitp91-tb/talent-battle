@@ -13,15 +13,15 @@ function rowToQ(r) {
     floatTolerance: r.float_tolerance == null ? undefined : r.float_tolerance, points: r.points,
     samples: P(r.samples), hidden: P(r.hidden), reference: r.reference,
     timeComplexity: r.time_complexity || '', spaceComplexity: r.space_complexity || '',
-    solutions: P2(r.solutions), createdBy: r.created_by, createdAt: r.created_at };
+    solutions: P2(r.solutions), mode: r.mode || 'stdio', harness: P2(r.harness), createdBy: r.created_by, createdAt: r.created_at };
 }
 function insert(q) {
   db.prepare(`INSERT INTO questions (id,title,difficulty,tags,topic,statement,time_limit_ms,memory_mb,
-    checker,float_tolerance,points,samples,hidden,reference,time_complexity,space_complexity,solutions,created_by,created_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(q.id, q.title, q.difficulty, J(q.tags), q.topic,
+    checker,float_tolerance,points,samples,hidden,reference,time_complexity,space_complexity,solutions,mode,harness,created_by,created_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(q.id, q.title, q.difficulty, J(q.tags), q.topic,
     q.statement, q.timeLimitMs, q.memoryMb, q.checker, q.floatTolerance ?? null, q.points,
     J(q.samples), J(q.hidden), q.reference || '', q.timeComplexity || '', q.spaceComplexity || '',
-    JSON.stringify(q.solutions || {}), q.createdBy || null, q.createdAt);
+    JSON.stringify(q.solutions || {}), q.mode || 'stdio', JSON.stringify(q.harness || {}), q.createdBy || null, q.createdAt);
 }
 
 // Seed once if the table is empty.
@@ -43,9 +43,14 @@ const listPublic = () => db.prepare('SELECT id,title,difficulty,tags,topic FROM 
 const getById = (id) => rowToQ(db.prepare('SELECT * FROM questions WHERE id=?').get(id));
 function getPublic(id) {
   const q = getById(id); if (!q) return null;
-  return { meta: { id: q.id, title: q.title, difficulty: q.difficulty, tags: q.tags, topic: q.topic,
-    timeLimitMs: q.timeLimitMs, memoryMb: q.memoryMb }, statement: q.statement,
+  const out = { meta: { id: q.id, title: q.title, difficulty: q.difficulty, tags: q.tags, topic: q.topic,
+    timeLimitMs: q.timeLimitMs, memoryMb: q.memoryMb, mode: q.mode || 'stdio' }, statement: q.statement,
     samples: (q.samples || []).map((s) => ({ input: s.input, expected: s.expected })) };
+  if (q.mode === 'function' && q.harness) {
+    out.functionLangs = Object.keys(q.harness).filter((k) => q.harness[k] && q.harness[k].driver);
+    out.starters = {}; for (const k of out.functionLangs) out.starters[k] = q.harness[k].starter || '';
+  }
+  return out;
 }
 const toTestCases = (q) => [
   ...(q.samples || []).map((s) => ({ input: s.input, expected: s.expected, hidden: false })),
@@ -72,7 +77,9 @@ function createQuestion(input, createdBy) {
     reference: input.reference || '', createdBy: createdBy || null, createdAt: Date.now(),
     timeComplexity: input.timeComplexity || '', spaceComplexity: input.spaceComplexity || '',
     solutions: (input.solutions && typeof input.solutions === 'object') ? input.solutions
-      : (input.reference ? { python: input.reference } : {}) };
+      : (input.reference ? { python: input.reference } : {}),
+    mode: input.mode === 'function' ? 'function' : 'stdio',
+    harness: (input.harness && typeof input.harness === 'object') ? input.harness : {} };
   insert(q); return q;
 }
 const deleteQuestion = (id) => db.prepare('DELETE FROM questions WHERE id=?').run(id).changes > 0;
