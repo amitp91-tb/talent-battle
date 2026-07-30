@@ -222,3 +222,9 @@ tbody tr:hover td, table tr:hover td{ background:#fbf8f1; }
 
 /* stat + hub cards subtle */
 .statcard{ border-radius:14px; } .statval{ letter-spacing:-.02em; }
+
+/* complexity badges + solution */
+.cxrow{ display:flex; gap:8px; margin-bottom:8px; flex-wrap:wrap; }
+.cxbadge{ font-size:12px; background:#f4f0e6; border:1px solid var(--line); padding:4px 11px; border-radius:999px; font-weight:600; }
+.io code{ font-family:ui-monospace,monospace; }
+code{ background:#f4f0e6; padding:1px 5px; border-radius:5px; font-family:ui-monospace,monospace; font-size:.92em; }

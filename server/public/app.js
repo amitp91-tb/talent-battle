@@ -157,7 +157,7 @@ const firstAvailableLang = () => Object.keys(LANGS.available).find(k=>LANGS.avai
 
 function renderTest(d){
   stopTimer();
-  const sample = d.samples[0] || {input:'',expected:''};
+  const samplesHtml = (d.samples||[]).map((sm,i)=>`<div class="io"><b>Example ${i+1} · Input</b>${esc((sm.input||'').trim())}</div><div class="io"><b>Example ${i+1} · Output</b>${esc((sm.expected||'').trim())}</div>`).join('') || '<p class="muted">No public examples.</p>';
   const startLang = firstAvailableLang();
   app.innerHTML = `
     <div class="test-top">
@@ -172,8 +172,7 @@ function renderTest(d){
           <span class="pill ${pillClass(d.meta.difficulty)}">${esc(d.meta.difficulty)}</span></div>
         <div class="muted" style="margin-bottom:8px">${esc((d.meta.tags||[]).join(' · '))}</div>
         <div>${renderStatement(d.statement)}</div>
-        <div class="io"><b>Sample Input</b>${esc(sample.input.trim())}</div>
-        <div class="io"><b>Sample Output</b>${esc(sample.expected.trim())}</div>
+        ${samplesHtml}
       </div>
       <div class="card">
         <div class="toolbar">
@@ -203,8 +202,24 @@ function renderTest(d){
   startTimer(); startProctor(); updateProctorBadge();
 }
 function renderStatement(md){
-  return esc(md).replace(/^# .*$/m,'').replace(/```([\s\S]*?)```/g,'<pre class="io">$1</pre>')
-    .replace(/\n{2,}/g,'</p><p>').replace(/\n/g,'<br>');
+  let x = esc(md||'');
+  x = x.replace(/```([\s\S]*?)```/g, (m,c)=>'<pre class="io">'+c.replace(/^\n/,'')+'</pre>');
+  x = x.replace(/^\s{0,3}#{1,6}\s*(.+?)\s*$/gm, '<h4 style="margin:12px 0 4px">$1</h4>');
+  x = x.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  x = x.replace(/`([^`]+)`/g, '<code>$1</code>');
+  x = x.replace(/!\[[^\]]*\]\(([^)]+)\)/g, '<img src="$1" style="max-width:100%;border-radius:8px;margin:8px 0">');
+  x = x.replace(/^\s*[-*]\s+(.+)$/gm, '• $1');
+  x = x.replace(/\n{2,}/g, '<br><br>').replace(/\n/g, '<br>');
+  return x;
+}
+function renderSolutions(solutions, tc, sc){
+  const L={python:'Python',cpp:'C++',java:'Java',javascript:'JavaScript',c:'C',ruby:'Ruby',php:'PHP',go:'Go',rust:'Rust',bash:'Bash'};
+  let h='';
+  if(tc||sc) h+=`<div class="cxrow">${tc?`<span class="cxbadge">⏱ Time: ${esc(tc)}</span>`:''}${sc?`<span class="cxbadge">💾 Space: ${esc(sc)}</span>`:''}</div>`;
+  const langs=Object.keys(solutions||{}).filter(k=>solutions[k] && String(solutions[k]).trim());
+  if(!langs.length) h+='<p class="muted">No solution provided.</p>';
+  else h+=langs.map(k=>`<div class="muted" style="margin-top:8px">${esc(L[k]||k)}</div><pre class="code">${esc(solutions[k])}</pre>`).join('');
+  return h;
 }
 const fileFor={python:'main.py',cpp:'main.cpp',c:'main.c',java:'Main.java',javascript:'main.js',bash:'main.sh',go:'main.go',ruby:'main.rb',php:'main.php',rust:'main.rs'};
 function onLangChange(){ const k=document.getElementById('lang').value;
@@ -248,10 +263,9 @@ function renderFeedback(d,out){
       <div class="tab" data-p="fp2">Correct solution</div>
       <div class="tab" data-p="fp3">How to improve</div></div>
     <div class="pane active" id="fp1"><p>${esc(fb.summary||'')}</p>
-      <div style="margin-top:8px">${out.results.map(verdictRow).join('')}</div></div>
-    <div class="pane" id="fp2"><p class="muted">Official reference solution:</p>
-      <pre class="code" id="refcode">${esc(fb.referenceSolution||'')}</pre>
-      <button class="btn btn-ghost" onclick="copyRef()">Copy solution</button></div>
+      <div class="muted" style="margin:8px 0 4px">Passed <b>${out.passed}</b> of <b>${out.total}</b> test cases (public + hidden)</div>
+      <div>${out.results.map(verdictRow).join('')}</div></div>
+    <div class="pane" id="fp2">${renderSolutions(fb.solutions, fb.timeComplexity, fb.spaceComplexity)}</div>
     <div class="pane" id="fp3">${((fb.improve&&fb.improve.videos)||[]).map(v=>`<span class="chip">▶ ${esc(v)}</span>`).join('')}
       <p class="muted" style="margin-top:12px">${esc((fb.improve&&fb.improve.note)||'')}</p></div>`;
   document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{ document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
@@ -461,28 +475,38 @@ function renderQuestionForm(){
       </div>
       <div class="field"><label>Problem statement</label>
         <textarea id="q-statement" style="height:120px" placeholder="Describe the problem, the input format, the output format, and an example."></textarea></div>
-      <div class="field"><label>Reference solution — Python, optional (shown to students in feedback)</label>
-        <textarea id="q-ref" class="editor" style="height:110px"></textarea></div>
+      <div class="split">
+        <div class="field"><label>Time complexity (e.g. O(n))</label><input id="q-tc" placeholder="O(n)"></div>
+        <div class="field"><label>Space complexity (e.g. O(1))</label><input id="q-sc" placeholder="O(1)"></div>
+      </div>
+      <h2 style="margin-top:14px">Reference solutions <span class="muted" style="font-size:12px">(shown to students in feedback)</span></h2>
+      <div class="field"><label>Python (recommended)</label><textarea id="sol-python" class="editor" style="height:100px"></textarea></div>
+      <div class="field"><label>C++ (optional)</label><textarea id="sol-cpp" class="editor" style="height:90px"></textarea></div>
+      <div class="field"><label>Java (optional)</label><textarea id="sol-java" class="editor" style="height:90px"></textarea></div>
+      <div class="field"><label>JavaScript (optional)</label><textarea id="sol-javascript" class="editor" style="height:90px"></textarea></div>
 
-      <h2 style="margin-top:16px">Open (visible) test cases</h2>
+      <h2 style="margin-top:16px">Public (visible) test cases <span class="muted" style="font-size:12px">— minimum 2</span></h2>
       <p class="muted" style="margin-top:0">Students can see these examples.</p>
       <div id="sample-cases"></div>
-      <button class="btn btn-ghost" onclick="addCase('sample')">+ Add open case</button>
+      <button class="btn btn-ghost" onclick="addCase('sample')">+ Add public case</button>
 
-      <h2 style="margin-top:18px">Hidden test cases</h2>
-      <p class="muted" style="margin-top:0">Used for grading — students never see these. Add at least one.</p>
+      <h2 style="margin-top:18px">Hidden test cases <span class="muted" style="font-size:12px">— minimum 5</span></h2>
+      <p class="muted" style="margin-top:0">Used for grading — students never see these.</p>
       <div id="hidden-cases"></div>
       <button class="btn btn-ghost" onclick="addCase('hidden')">+ Add hidden case</button>
 
       <div style="margin-top:18px"><button class="btn btn-primary" onclick="submitQuestion()">Create question</button></div>
     </div>`;
-  addCase('sample'); addCase('hidden');
+  addCase('sample'); addCase('sample');
+  for(let i=0;i<5;i++) addCase('hidden');
 }
 async function submitQuestion(){
+  const solutions={}; for(const k of ['python','cpp','java','javascript']){ const v=val('sol-'+k); if(v && v.trim()) solutions[k]=v; }
   const payload = {
     title: val('q-title'), difficulty: val('q-diff'), checker: val('q-checker'),
     tags: val('q-tags'), topic: val('q-topic'), timeLimitMs: val('q-time'), memoryMb: val('q-mem'),
-    statement: val('q-statement'), reference: val('q-ref'),
+    statement: val('q-statement'), reference: solutions.python || '', solutions,
+    timeComplexity: val('q-tc'), spaceComplexity: val('q-sc'),
     samples: collectCases('sample'), hidden: collectCases('hidden') };
   const { status, body } = await apiPost('/api/admin/questions', payload);
   if(status!==200){ document.getElementById('qerr').textContent = body.error || 'Could not create question'; return; }
@@ -726,7 +750,7 @@ async function viewSolution(id){
   const res = document.getElementById('results');
   const r = await fetch('/api/solution/'+id); const body = await r.json();
   if(r.status!==200){ res.innerHTML = `<div class="row"><span class="dot bad"></span>${esc(body.error||'Solution locked')}</div>`; return; }
-  res.innerHTML = `<div class="muted" style="margin-bottom:4px">Reference solution (Python)</div><pre class="code">${esc(body.reference)}</pre>`;
+  res.innerHTML = renderSolutions(body.solutions, body.timeComplexity, body.spaceComplexity);
 }
 
 

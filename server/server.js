@@ -200,7 +200,9 @@ async function handleApi(req, res, url) {
     const q = findProblem(solm[1]); if (!q) return sendJSON(res, 404, { error: 'not found' });
     const attempted = auth.userSubmissions(me.id).some((x) => x.problemId === solm[1]);
     if (!attempted && me.role === 'student') return sendJSON(res, 403, { error: 'Submit at least once to unlock the solution.' });
-    return sendJSON(res, 200, { title: q.title, reference: q.reference || '(no solution available)' });
+    const solutions = (q.solutions && Object.keys(q.solutions).length) ? q.solutions : (q.reference ? { python: q.reference } : {});
+    return sendJSON(res, 200, { title: q.title, solutions, reference: q.reference || '',
+      timeComplexity: q.timeComplexity || '', spaceComplexity: q.spaceComplexity || '' });
   }
   const tstu = url.match(/^\/api\/tests\/([^/]+)$/);
   if (req.method === 'GET' && tstu) {
@@ -312,8 +314,9 @@ async function handleApi(req, res, url) {
     if (req.method === 'POST' && url === '/api/admin/questions') {
       const b = await readBody(req);
       if (!b.title || !b.statement) return sendJSON(res, 400, { error: 'Title and statement are required.' });
-      if (!Array.isArray(b.hidden) || b.hidden.filter((c)=>String(c.input||'')!==''||String(c.expected||'')!=='').length === 0)
-        return sendJSON(res, 400, { error: 'Add at least one hidden test case.' });
+      const nonEmpty = (arr) => Array.isArray(arr) ? arr.filter((c)=>String(c.input||'')!==''||String(c.expected||'')!=='').length : 0;
+      if (nonEmpty(b.samples) < 2) return sendJSON(res, 400, { error: 'Add at least 2 public (sample) test cases.' });
+      if (nonEmpty(b.hidden) < 5) return sendJSON(res, 400, { error: 'Add at least 5 hidden test cases.' });
       const q = store.createQuestion(b, me.id); return sendJSON(res, 200, { question: { id: q.id, title: q.title } });
     }
     if (req.method === 'DELETE' && am) { const ok = store.deleteQuestion(am[1]);
@@ -582,7 +585,9 @@ function buildFeedback2(q, result) {
   else if (result.overall === 'Compilation Error') summary = `Your code did not compile. Fix the errors shown, then resubmit.`;
   else if (result.overall === 'Time Limit Exceeded') summary = `Correct idea perhaps, but too slow — find a more efficient approach.`;
   else summary = `You passed ${result.passed} of ${result.total} tests. The missed cases usually involve tricky inputs. Compare with the reference solution.`;
+  const solutions = (q.solutions && Object.keys(q.solutions).length) ? q.solutions : (q.reference ? { python: q.reference } : {});
   return { summary, failedCount: failed.length, referenceSolution: q.reference || '(no reference provided)',
+    solutions, timeComplexity: q.timeComplexity || '', spaceComplexity: q.spaceComplexity || '',
     improve: { videos: (q.tags || []).slice(0, 2).map((t) => `Video: ${t} — core concepts`), note: 'Re-attempt after reviewing the solution.' } };
 }
 

@@ -20,6 +20,7 @@ function rowToQ(r) {
     timeLimitMs: r.time_limit_ms, memoryMb: r.memory_mb, checker: r.checker,
     floatTolerance: r.float_tolerance == null ? undefined : r.float_tolerance,
     samples: P(r.samples), hidden: P(r.hidden), reference: r.reference,
+    timeComplexity: r.time_complexity || '', spaceComplexity: r.space_complexity || '', solutions: (()=>{try{return JSON.parse(r.solutions||'{}')}catch{return {}}})(),
     tags: ['100 Days', 'Day ' + r.day], topic: '100 Days of Code' };
 }
 const getById = (id) => rowToQ(db.prepare('SELECT * FROM challenge WHERE id=?').get(id));
@@ -46,8 +47,11 @@ function update(id, input) {
   const reference = input.reference != null ? String(input.reference) : q.reference;
   const samples = input.samples != null ? clean(input.samples) : q.samples;
   const hidden = input.hidden != null ? clean(input.hidden) : q.hidden;
-  db.prepare(`UPDATE challenge SET title=?,difficulty=?,statement=?,checker=?,reference=?,samples=?,hidden=? WHERE id=?`)
-    .run(title, difficulty, statement, checker, reference, J(samples), J(hidden), id);
+  const timeComplexity = input.timeComplexity != null ? String(input.timeComplexity) : (q.timeComplexity||'');
+  const spaceComplexity = input.spaceComplexity != null ? String(input.spaceComplexity) : (q.spaceComplexity||'');
+  const solutions = (input.solutions && typeof input.solutions==='object') ? input.solutions : (q.solutions||{});
+  db.prepare(`UPDATE challenge SET title=?,difficulty=?,statement=?,checker=?,reference=?,samples=?,hidden=?,time_complexity=?,space_complexity=?,solutions=? WHERE id=?`)
+    .run(title, difficulty, statement, checker, reference, J(samples), J(hidden), timeComplexity, spaceComplexity, JSON.stringify(solutions), id);
   return getById(id);
 }
 module.exports = { list, getById, getPublic, listAdmin, getAdmin, update, all: () => db.prepare('SELECT * FROM challenge ORDER BY day').all().map(rowToQ) };

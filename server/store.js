@@ -4,20 +4,24 @@ const fs = require('fs');
 const path = require('path');
 const { db, J, P } = require('./db');
 const { loadProblem, listProblems } = require('../judge/loader');
+const P2 = (x) => { try { return JSON.parse(x || '{}'); } catch { return {}; } };
 
 function rowToQ(r) {
   if (!r) return null;
   return { id: r.id, title: r.title, difficulty: r.difficulty, tags: P(r.tags), topic: r.topic,
     statement: r.statement, timeLimitMs: r.time_limit_ms, memoryMb: r.memory_mb, checker: r.checker,
     floatTolerance: r.float_tolerance == null ? undefined : r.float_tolerance, points: r.points,
-    samples: P(r.samples), hidden: P(r.hidden), reference: r.reference, createdBy: r.created_by, createdAt: r.created_at };
+    samples: P(r.samples), hidden: P(r.hidden), reference: r.reference,
+    timeComplexity: r.time_complexity || '', spaceComplexity: r.space_complexity || '',
+    solutions: P2(r.solutions), createdBy: r.created_by, createdAt: r.created_at };
 }
 function insert(q) {
   db.prepare(`INSERT INTO questions (id,title,difficulty,tags,topic,statement,time_limit_ms,memory_mb,
-    checker,float_tolerance,points,samples,hidden,reference,created_by,created_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(q.id, q.title, q.difficulty, J(q.tags), q.topic,
+    checker,float_tolerance,points,samples,hidden,reference,time_complexity,space_complexity,solutions,created_by,created_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(q.id, q.title, q.difficulty, J(q.tags), q.topic,
     q.statement, q.timeLimitMs, q.memoryMb, q.checker, q.floatTolerance ?? null, q.points,
-    J(q.samples), J(q.hidden), q.reference || '', q.createdBy || null, q.createdAt);
+    J(q.samples), J(q.hidden), q.reference || '', q.timeComplexity || '', q.spaceComplexity || '',
+    JSON.stringify(q.solutions || {}), q.createdBy || null, q.createdAt);
 }
 
 // Seed once if the table is empty.
@@ -65,7 +69,10 @@ function createQuestion(input, createdBy) {
     checker: ['token', 'exact', 'float'].includes(input.checker) ? input.checker : 'token',
     floatTolerance: input.floatTolerance ? Number(input.floatTolerance) : undefined,
     points: Number(input.points) || 100, samples: cleanCases(input.samples), hidden: cleanCases(input.hidden),
-    reference: input.reference || '', createdBy: createdBy || null, createdAt: Date.now() };
+    reference: input.reference || '', createdBy: createdBy || null, createdAt: Date.now(),
+    timeComplexity: input.timeComplexity || '', spaceComplexity: input.spaceComplexity || '',
+    solutions: (input.solutions && typeof input.solutions === 'object') ? input.solutions
+      : (input.reference ? { python: input.reference } : {}) };
   insert(q); return q;
 }
 const deleteQuestion = (id) => db.prepare('DELETE FROM questions WHERE id=?').run(id).changes > 0;
