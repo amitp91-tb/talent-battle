@@ -57,11 +57,24 @@ const isAdmin = (u) => u && u.role === 'admin';
 const isStaff = (u) => u && (u.role === 'admin' || u.role === 'subadmin');
 
 const MIME = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' };
-function serveStatic(res, urlPath) {
+function serveStatic(res, urlPath, req) {
   let file = urlPath === '/' ? '/index.html' : urlPath;
   const full = path.join(PUBLIC_DIR, path.normalize(file).replace(/^(\.\.[/\\])+/, ''));
   if (!full.startsWith(PUBLIC_DIR) || !fs.existsSync(full)) { res.writeHead(404); return res.end('Not found'); }
-  res.writeHead(200, { 'Content-Type': MIME[path.extname(full)] || 'text/plain' });
+  const ext = path.extname(full).toLowerCase();
+  // HTML/JS/CSS must revalidate so a deploy takes effect on the next reload
+  // (previously no cache headers were sent, so browsers ran stale JS after deploys).
+  const revalidate = ext === '.html' || ext === '.js' || ext === '.css' || file === '/index.html';
+  let lastMod = '';
+  try { lastMod = fs.statSync(full).mtime.toUTCString(); } catch (e) {}
+  if (revalidate && lastMod && req && req.headers['if-modified-since'] === lastMod) {
+    res.writeHead(304, { 'Last-Modified': lastMod, 'Cache-Control': 'no-cache' });
+    return res.end();
+  }
+  const headers = { 'Content-Type': MIME[ext] || 'text/plain' };
+  if (lastMod) headers['Last-Modified'] = lastMod;
+  headers['Cache-Control'] = revalidate ? 'no-cache' : 'public, max-age=86400';
+  res.writeHead(200, headers);
   fs.createReadStream(full).pipe(res);
 }
 
@@ -665,7 +678,7 @@ const server = http.createServer((req, res) => {
     if (f.startsWith(UPLOADS) && fs.existsSync(f)) { res.writeHead(200, { 'Content-Type': MIME[path.extname(f).toLowerCase()] || 'application/octet-stream', 'Cache-Control': 'public, max-age=86400' }); return fs.createReadStream(f).pipe(res); }
     res.writeHead(404); return res.end('not found');
   }
-  return serveStatic(res, url);
+  return serveStatic(res, url, req);
 });
 server.listen(PORT, () => {
   console.log('\n  Talent Battle running:  http://localhost:' + PORT);

@@ -215,7 +215,7 @@ function renderTest(d){
           <span class="grow"></span>
           <button class="btn btn-ghost" onclick="doRun('${d.meta.id}')">▷ Run</button>
           <button class="btn btn-primary" onclick="doSubmit('${d.meta.id}')">Submit</button>
-          <button class="btn btn-ghost" onclick="viewSolution('${d.meta.id}')">Solution</button>
+          ${(ME&&ME.role!=='student')?`<button class="btn btn-ghost" onclick="viewSolution('${d.meta.id}')">Solution</button>`:''}
         </div>
         <div class="editor-wrap">
           <div class="editor-bar"><span class="dots"><i></i><i></i><i></i></span><span class="editor-file" id="editor-file">main.py</span><span class="grow"></span><button class="ed-btn" type="button" onclick="edFont(-1)" title="Smaller font">A−</button><button class="ed-btn" type="button" onclick="edFont(1)" title="Larger font">A+</button><button class="ed-btn" type="button" onclick="edTheme()" title="Toggle editor light/dark">🌓</button><button class="ed-btn" type="button" id="ed-fs-btn" onclick="edFullscreen()" title="Full screen (Esc to exit)">⛶ Full screen</button></div>
