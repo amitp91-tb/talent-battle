@@ -1079,12 +1079,44 @@ function preventCtx(e){ if(examSession) e.preventDefault(); }
 function uploadImage(targetId){
   const inp=document.createElement('input'); inp.type='file'; inp.accept='image/*';
   inp.onchange=()=>{ const f=inp.files&&inp.files[0]; if(!f) return;
-    if(f.size>2*1024*1024){ toast('Image too large (max 2 MB)'); return; }
-    const rd=new FileReader(); rd.onload=async()=>{
-      const { status, body } = await apiPost('/api/admin/upload', { dataUrl: rd.result });
-      if(status!==200){ toast(body.error||'Upload failed'); return; }
-      const ta=document.getElementById(targetId); if(ta){ ta.value += (ta.value.endsWith('\n')||!ta.value?'':'\n')+'![image]('+body.url+')\n'; }
-      toast('Image inserted ✓');
-    }; rd.readAsDataURL(f); };
+    toast('Processing image…');
+    const rd=new FileReader();
+    rd.onload=()=>{
+      const img=new Image();
+      img.onload=async()=>{
+        // Downscale large images (phone photos, big screenshots) so the encoded
+        // payload stays under the server's 2 MB cap instead of being rejected.
+        const MAXDIM=1400; let w=img.width, h=img.height;
+        if(w>MAXDIM||h>MAXDIM){ const s=Math.min(MAXDIM/w, MAXDIM/h); w=Math.round(w*s); h=Math.round(h*s); }
+        const canvas=document.createElement('canvas'); canvas.width=w||1; canvas.height=h||1;
+        canvas.getContext('2d').drawImage(img,0,0,canvas.width,canvas.height);
+        // Keep PNG (crisp for diagrams/screenshots) unless it's too big, then JPEG.
+        let dataUrl=canvas.toDataURL('image/png'); const CAP=2.5*1024*1024;
+        if(dataUrl.length>CAP){ dataUrl=canvas.toDataURL('image/jpeg',0.9);
+          for(let q=0.85; q>0.4 && dataUrl.length>CAP; q-=0.1) dataUrl=canvas.toDataURL('image/jpeg',q); }
+        if(dataUrl.length>2.6*1024*1024){ toast('Image is too large even after resizing — please pick a smaller one'); return; }
+        const { status, body } = await apiPost('/api/admin/upload', { dataUrl });
+        if(status!==200){ toast(body.error||'Upload failed'); return; }
+        const ta=document.getElementById(targetId);
+        if(ta){ ta.value += (ta.value.endsWith('\n')||!ta.value?'':'\n')+'![image]('+body.url+')\n'; showImagePreview(targetId, body.url); }
+        toast('Image uploaded & inserted ✓');
+      };
+      img.onerror=()=>toast('Could not read that image file');
+      img.src=rd.result;
+    };
+    rd.onerror=()=>toast('Could not read that file');
+    rd.readAsDataURL(f); };
   inp.click();
+}
+// Visible confirmation that the image was uploaded (the statement box only holds
+// markdown text, which previously made a successful upload look like it failed).
+function showImagePreview(targetId, url){
+  const ta=document.getElementById(targetId); if(!ta) return;
+  let box=document.getElementById(targetId+'-imgprev');
+  if(!box){ box=document.createElement('div'); box.id=targetId+'-imgprev';
+    box.style.cssText='display:flex;gap:8px;flex-wrap:wrap;margin-top:8px';
+    ta.parentNode.insertBefore(box, ta.nextSibling); }
+  const im=document.createElement('img'); im.src=url; im.title=url;
+  im.style.cssText='max-height:72px;border-radius:6px;border:1px solid #e5ddc8';
+  box.appendChild(im);
 }
