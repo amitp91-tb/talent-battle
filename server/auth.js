@@ -2,7 +2,10 @@
 const crypto = require('crypto');
 const { db, J, P } = require('./db');
 
-const sessions = new Map(); // token -> userId (in memory; cleared on restart)
+const sessions = new Map(); // token -> userId (in-memory cache over the sessions table)
+// Persist sessions so a server restart (e.g. a deploy) does not log everyone out.
+try { db.prepare('DELETE FROM sessions WHERE created_at < ?').run(Date.now() - 30 * 86400000); } catch (e) {}
+try { for (const r of db.prepare('SELECT token,user_id FROM sessions').all()) sessions.set(r.token, r.user_id); } catch (e) {}
 
 function hashPassword(pw, salt) {
   salt = salt || crypto.randomBytes(16).toString('hex');
@@ -59,13 +62,18 @@ function setPassword(id, pw) {
 }
 const allUsers = () => db.prepare('SELECT * FROM users').all().map(rowToUser);
 
-function startSession(userId) { const t = crypto.randomBytes(24).toString('hex'); sessions.set(t, userId); return t; }
-const endSession = (t) => sessions.delete(t);
+function startSession(userId) {
+  const t = crypto.randomBytes(24).toString('hex'); sessions.set(t, userId);
+  try { db.prepare('INSERT OR REPLACE INTO sessions (token,user_id,created_at) VALUES (?,?,?)').run(t, userId, Date.now()); } catch (e) {}
+  return t;
+}
+const endSession = (t) => { sessions.delete(t); try { db.prepare('DELETE FROM sessions WHERE token=?').run(t); } catch (e) {} return true; };
 const userForToken = (t) => { const id = sessions.get(t); return id ? findById(id) : null; };
 
 function addSubmission(s) {
-  db.prepare(`INSERT INTO submissions (user_id,problem_id,title,tags,language,score,overall,at,source,violations)
-    VALUES (?,?,?,?,?,?,?,?,?,?)`).run(s.userId, s.problemId, s.title, J(s.tags), s.language, s.score, s.overall, s.at, s.source || '', s.violations || 0);
+  db.prepare(`INSERT INTO submissions (user_id,problem_id,title,tags,language,score,overall,at,source,violations,runtime_ms,memory_kb)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(s.userId, s.problemId, s.title, J(s.tags), s.language, s.score, s.overall,
+    s.at, s.source || '', s.violations || 0, s.runtimeMs == null ? null : s.runtimeMs, s.memoryKb == null ? null : s.memoryKb);
 }
 const subRow = (r) => ({ userId: r.user_id, problemId: r.problem_id, title: r.title, tags: P(r.tags),
   language: r.language, score: r.score, overall: r.overall, at: r.at, violations: r.violations || 0 });

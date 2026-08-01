@@ -319,6 +319,7 @@ function renderFeedback(d,out){
   stopTimer();
   if(out.overall==='Language Unavailable'){ alert(out.note); return; }
   const pass = out.overall==='Accepted'; const fb = out.feedback||{};
+  const _chm = /^D(\d+)$/.exec((d.meta&&d.meta.id)||''); const nextId = (_chm && Number(_chm[1])<100) ? 'D'+String(Number(_chm[1])+1).padStart(3,'0') : null;
   const results = out.results||[];
   const pub = results.filter(r=>!r.hidden), hidden = results.filter(r=>r.hidden);
   const times = results.map(r=>r.timeMs).filter(x=>x!=null);
@@ -336,7 +337,8 @@ function renderFeedback(d,out){
   app.innerHTML = `
     <div class="test-top">
       <button class="btn btn-ghost" onclick="renderList()">← Problems</button>
-      <button class="btn btn-primary" onclick="openProblem('${d.meta.id}')">↻ Re-attempt</button></div>
+      <button class="btn btn-ghost" onclick="openProblem('${d.meta.id}')">↻ Re-attempt</button>
+      ${nextId?`<button class="btn btn-primary" onclick="openChallenge('${nextId}')">Next day →</button>`:''}</div>
     <div class="scorecard ${pass?'':'fail'}">
       <div class="score-big">${out.score||0}<span style="font-size:16px;color:#8a836f">/100</span></div>
       <div><b>${esc(out.overall)}</b> — ${out.passed} of ${out.total} tests passed<br>

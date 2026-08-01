@@ -125,9 +125,11 @@ async function handleApi(req, res, url) {
       const feedback = buildFeedback2(q, result);
       const flags = body.flags || {};
       const violations = (Number(flags.tabSwitches) || 0) + (Number(flags.pasteAttempts) || 0);
+      const runtimeMs = (result.results || []).reduce((m, r) => Math.max(m, r.timeMs || 0), 0);
+      const peakMemKb = (result.results || []).reduce((m, r) => Math.max(m, r.memoryKb || 0), 0) || null;
       auth.addSubmission({ userId: me.id, problemId: q.id, title: q.title, tags: q.tags,
         language: body.language, score: result.score, overall: result.overall, at: Date.now(),
-        source: body.code || '', violations });
+        source: body.code || '', violations, runtimeMs, memoryKb: peakMemKb });
       return sendJSON(res, 200, { ...result, feedback });
     }
     return sendJSON(res, 200, result);

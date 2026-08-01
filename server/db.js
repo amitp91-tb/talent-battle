@@ -40,6 +40,9 @@ CREATE TABLE IF NOT EXISTS challenge (
 CREATE TABLE IF NOT EXISTS tests (
   id TEXT PRIMARY KEY, title TEXT, description TEXT, question_ids TEXT, batch_ids TEXT, created_at INTEGER
 );
+CREATE TABLE IF NOT EXISTS sessions (
+  token TEXT PRIMARY KEY, user_id TEXT, created_at INTEGER
+);
 `);
 
 // small JSON helpers for columns that hold arrays/objects
@@ -48,6 +51,8 @@ addColumn('users','mobile','TEXT'); addColumn('users','branch','TEXT'); addColum
 addColumn('batches','college','TEXT'); addColumn('batches','branch','TEXT'); addColumn('batches','year_of_passing','TEXT');
 addColumn('submissions','source','TEXT');
 addColumn('submissions','violations','INTEGER');
+addColumn('submissions','runtime_ms','INTEGER');
+addColumn('submissions','memory_kb','INTEGER');
 addColumn('questions','time_complexity','TEXT'); addColumn('questions','space_complexity','TEXT'); addColumn('questions','solutions','TEXT');
 addColumn('questions','mode','TEXT'); addColumn('questions','harness','TEXT');
 addColumn('challenge','time_complexity','TEXT'); addColumn('challenge','space_complexity','TEXT'); addColumn('challenge','solutions','TEXT');
