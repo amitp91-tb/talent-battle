@@ -1,0 +1,22 @@
+# dependencies
+node_modules/
+# build output
+dist/
+build/
+# compiled judge artifacts / temp
+*.o
+*.class
+main
+tb-judge-*/
+# environment secrets (NEVER commit these)
+.env
+.env.*
+# OS/editor junk
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# sqlite database
+server/data/*.db
+server/data/*.db-*
