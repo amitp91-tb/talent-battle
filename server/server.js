@@ -36,8 +36,15 @@ function sendJSON(res, code, obj, headers = {}) {
   res.end(JSON.stringify(obj));
 }
 function readBody(req) {
-  return new Promise((resolve) => { let d = ''; req.on('data', (c) => { d += c; if (d.length > 5e6) req.destroy(); });
-    req.on('end', () => { try { resolve(JSON.parse(d || '{}')); } catch { resolve({}); } }); });
+  return new Promise((resolve) => {
+    let d = '';
+    // Guard: oversized bodies must still settle the promise, otherwise the
+    // request handler awaits forever and the client hangs. resolve() is
+    // idempotent, so an early resolve here is safe even if 'end' also fires.
+    req.on('data', (c) => { d += c; if (d.length > 5e6) { resolve({}); req.destroy(); } });
+    req.on('end', () => { try { resolve(JSON.parse(d || '{}')); } catch { resolve({}); } });
+    req.on('error', () => resolve({}));
+  });
 }
 function parseCookies(req) {
   const out = {}; (req.headers.cookie || '').split(';').forEach((p) => {
