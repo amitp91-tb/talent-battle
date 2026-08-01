@@ -306,7 +306,13 @@ async function doSubmit(id){ const res=document.getElementById('results'); res.i
   const { status, body:out } = resp;
   if(status===401){ alert('Please log in again.'); renderAuth('login'); return; }
   if(!out || status>=500){ res.innerHTML='<div class="row"><span class="dot bad"></span>The judge could not process this submission. Your code is preserved — please try again.</div>'; return; }
-  renderFeedback(await apiGet('/api/problems/'+id), out); }
+  // Use the already-loaded problem for the feedback header. (Re-fetching /api/problems
+  // 404s for 100-Days challenge IDs, which used to crash renderFeedback and leave the
+  // page stuck with the editor gone — the "100 Days hang after submit" bug.)
+  let meta = (curProblem && curProblem.meta) ? curProblem : null;
+  if(!meta){ let r=await fetch('/api/problems/'+id); if(!r.ok) r=await fetch('/api/challenge/'+id);
+    meta = r.ok ? await r.json() : { meta:{ id:id, title:'' } }; }
+  renderFeedback(meta, out); }
 
 // ---------- FEEDBACK ----------
 function renderFeedback(d,out){
