@@ -92,7 +92,8 @@ function normalize(s) {
 //   testCases: [{ input, expected, hidden }]
 async function judge({ language, code, testCases,
                        timeLimitMs = 2000, memoryMb = 256,
-                       checker = 'token', floatTolerance = 1e-6 }) {
+                       checker = 'token', floatTolerance = 1e-6,
+                       revealHidden = false }) {
   const lang = LANGUAGES[language];
   if (!lang) throw new Error(`Unsupported language: ${language}`);
 
@@ -145,17 +146,20 @@ async function judge({ language, code, testCases,
         verdict = VERDICT.WRONG_ANSWER;
       }
 
+      const cap = (s, n) => { s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n) + '…' : s; };
       results.push({
         index: i + 1,
         hidden: !!tc.hidden,
         verdict,
         timeMs: r.durationMs,
-        // For sample (visible) cases we expose details; hidden cases stay opaque
-        // to the student, exactly like a real online assessment.
-        input: tc.hidden ? undefined : tc.input,
-        expected: tc.hidden ? undefined : tc.expected,
-        got: tc.hidden ? undefined : r.stdout,
-        stderr: tc.hidden ? undefined : r.stderr.slice(0, 400),
+        memoryKb: r.memoryKb == null ? null : r.memoryKb,
+        // Practice-mode feedback (#6): expose input/expected/output for every case
+        // — including hidden ones — so students can review and debug failures.
+        // In graded contexts (revealHidden=false) hidden cases stay opaque.
+        input: (!tc.hidden || revealHidden) ? cap(tc.input, 2000) : undefined,
+        expected: (!tc.hidden || revealHidden) ? cap(tc.expected, 2000) : undefined,
+        got: (!tc.hidden || revealHidden) ? cap(r.stdout, 2000) : undefined,
+        stderr: (!tc.hidden || revealHidden) ? cap(r.stderr, 400) : undefined,
       });
     }
 

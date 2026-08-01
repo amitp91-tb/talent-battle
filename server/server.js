@@ -118,7 +118,9 @@ async function handleApi(req, res, url) {
       effCode = String(q.harness[body.language].driver).replace('{{SOLUTION}}', body.code || '');
     }
     const result = await judge({ language: body.language, code: effCode, testCases: cases,
-      timeLimitMs: q.timeLimitMs, memoryMb: q.memoryMb, checker: q.checker, floatTolerance: q.floatTolerance });
+      timeLimitMs: q.timeLimitMs, memoryMb: q.memoryMb, checker: q.checker, floatTolerance: q.floatTolerance,
+      // Only reveal hidden-case details in practice mode (never during a proctored exam/contest).
+      revealHidden: isSubmit && body.practice === true });
     if (isSubmit) {
       const feedback = buildFeedback2(q, result);
       const flags = body.flags || {};

@@ -36,13 +36,42 @@ function disposeEditor(){ if(mona){ try{mona.dispose();}catch(e){} mona=null; } 
 function mountEditor(code,lang){
   disposeEditor();
   const host=document.getElementById('mona'); const ta=document.getElementById('code');
+  const p=getEditorPrefs();
   if(window.__monaco && host){
-    try{ mona=window.__monaco.editor.create(host,{ value:code, language:monLang[lang]||'plaintext', theme:'vs-dark',
-        automaticLayout:true, minimap:{enabled:false}, fontSize:13, tabSize:4, scrollBeyondLastLine:false, padding:{top:10} });
-      host.style.display='block'; if(ta) ta.style.display='none'; return; }catch(e){ mona=null; }
+    try{ mona=window.__monaco.editor.create(host,{ value:code, language:monLang[lang]||'plaintext',
+        theme: p.theme==='light'?'vs':'vs-dark',
+        automaticLayout:true, minimap:{enabled:false}, fontSize:p.fontSize||13, tabSize:4, scrollBeyondLastLine:false, padding:{top:10} });
+      host.style.display='block'; if(ta) ta.style.display='none'; applyEditorPrefs(); watchEditorHeight(); return; }catch(e){ mona=null; }
   }
   if(host) host.style.display='none'; if(ta){ ta.style.display='block'; ta.value=code; }
+  applyEditorPrefs(); watchEditorHeight();
 }
+// ---- Editor preferences (#10): resizable height, fullscreen, font size, theme — persisted ----
+function getEditorPrefs(){ try{ return JSON.parse(localStorage.getItem('tb_editor_prefs')||'{}'); }catch(e){ return {}; } }
+function saveEditorPrefs(p){ try{ localStorage.setItem('tb_editor_prefs', JSON.stringify(p)); }catch(e){} }
+function applyEditorPrefs(){
+  const wrap=document.querySelector('.editor-wrap'); const p=getEditorPrefs();
+  if(wrap && p.height) wrap.style.setProperty('--editor-h', p.height+'px');
+  const fs=p.fontSize||13;
+  if(mona){ try{ mona.updateOptions({fontSize:fs}); if(window.__monaco) window.__monaco.editor.setTheme(p.theme==='light'?'vs':'vs-dark'); }catch(e){} }
+  const ta=document.getElementById('code'); if(ta) ta.style.fontSize=fs+'px';
+}
+function edFont(d){ const p=getEditorPrefs(); p.fontSize=Math.max(9,Math.min(30,(p.fontSize||13)+d)); saveEditorPrefs(p); applyEditorPrefs(); }
+function edTheme(){ const p=getEditorPrefs(); p.theme=(p.theme==='light'?'dark':'light'); saveEditorPrefs(p); applyEditorPrefs(); }
+function edFullscreen(){ const wrap=document.querySelector('.editor-wrap'); if(!wrap) return;
+  const on=wrap.classList.toggle('fs'); document.body.style.overflow=on?'hidden':'';
+  const btn=document.getElementById('ed-fs-btn'); if(btn) btn.textContent=on?'⤢ Exit full screen':'⛶ Full screen';
+  if(mona){ try{ mona.layout(); }catch(e){} } }
+let _edResizeT=null;
+function watchEditorHeight(){
+  const wrap=document.querySelector('.editor-wrap'); if(!wrap||!window.ResizeObserver||wrap._roAttached) return;
+  wrap._roAttached=true;
+  new ResizeObserver(()=>{ if(wrap.classList.contains('fs')) return;
+    clearTimeout(_edResizeT); _edResizeT=setTimeout(()=>{ const h=Math.round(wrap.getBoundingClientRect().height);
+      if(h>150){ const p=getEditorPrefs(); p.height=h; saveEditorPrefs(p); } }, 400); }).observe(wrap);
+}
+document.addEventListener('keydown',(e)=>{ if(e.key==='Escape'){ const w=document.querySelector('.editor-wrap.fs'); if(w){ w.classList.remove('fs'); document.body.style.overflow='';
+  const b=document.getElementById('ed-fs-btn'); if(b) b.textContent='⛶ Full screen'; if(mona){ try{ mona.layout(); }catch(e){} } } } });
 function getCode(){ return mona? mona.getValue() : (document.getElementById('code')?document.getElementById('code').value:''); }
 function setCode(v){ if(mona) mona.setValue(v); else { const ta=document.getElementById('code'); if(ta) ta.value=v; } }
 function setEditorLang(lang){ if(mona&&window.__monaco){ try{ window.__monaco.editor.setModelLanguage(mona.getModel(), monLang[lang]||'plaintext'); }catch(e){} } }
@@ -189,7 +218,7 @@ function renderTest(d){
           <button class="btn btn-ghost" onclick="viewSolution('${d.meta.id}')">Solution</button>
         </div>
         <div class="editor-wrap">
-          <div class="editor-bar"><span class="dots"><i></i><i></i><i></i></span><span class="editor-file" id="editor-file">main.py</span></div>
+          <div class="editor-bar"><span class="dots"><i></i><i></i><i></i></span><span class="editor-file" id="editor-file">main.py</span><span class="grow"></span><button class="ed-btn" type="button" onclick="edFont(-1)" title="Smaller font">A−</button><button class="ed-btn" type="button" onclick="edFont(1)" title="Larger font">A+</button><button class="ed-btn" type="button" onclick="edTheme()" title="Toggle editor light/dark">🌓</button><button class="ed-btn" type="button" id="ed-fs-btn" onclick="edFullscreen()" title="Full screen (Esc to exit)">⛶ Full screen</button></div>
           <div id="mona" class="mona" style="display:none"></div>
           <textarea class="editor" id="code" spellcheck="false"></textarea>
         </div>
@@ -205,6 +234,8 @@ function renderTest(d){
   document.getElementById('lang').value = startLang;
   const ef=document.getElementById('editor-file'); if(ef) ef.textContent = fileFor[startLang]||'main';
   mountEditor(starterFor(startLang), startLang);
+  // Restore any previously written code for this problem so a reload/re-attempt never loses work (#3).
+  try{ const saved=localStorage.getItem('tb_code_'+(d.meta&&d.meta.id)); if(saved && saved.trim()) setCode(saved); }catch(e){}
   startTimer(); startProctor(); updateProctorBadge();
   if(examMode) startExam();
 }
@@ -239,9 +270,27 @@ function onLangChange(){ const k=document.getElementById('lang').value;
 function startTimer(){ let t=30*60; timer=setInterval(()=>{ if(t>0)t--; const m=Math.floor(t/60),s=t%60;
   const el=document.getElementById('timer'); if(el) el.textContent=(m<10?'0':'')+m+':'+(s<10?'0':'')+s; },1000); }
 
-function verdictRow(r){ const cls=r.verdict==='Accepted'?'ok':'bad'; const name=r.hidden?'Hidden test '+r.index:'Sample test';
-  let extra=''; if(!r.hidden && r.got!==undefined) extra=` <span class="muted">got "${esc((r.got||'').trim())}", expected "${esc((r.expected||'').trim())}"</span>`;
-  return `<div class="row"><span class="dot ${cls}"></span>${name}: <b>&nbsp;${esc(r.verdict)}</b>${extra}</div>`; }
+function verdictRow(r){ const cls=r.verdict==='Accepted'?'ok':'bad'; const name=r.hidden?'Hidden test '+r.index:'Sample test '+r.index;
+  const t = r.timeMs!=null?` <span class="muted">· ${r.timeMs} ms</span>`:'';
+  let extra=''; if(r.verdict!=='Accepted' && r.got!==undefined) extra=` <span class="muted">got "${esc((r.got||'').trim().slice(0,80))}", expected "${esc((r.expected||'').trim().slice(0,80))}"</span>`;
+  return `<div class="row"><span class="dot ${cls}"></span>${name}: <b>&nbsp;${esc(r.verdict)}</b>${t}${extra}</div>`; }
+// Rich per-case card for the submission dashboard (#6 hidden review, #11, #12 runtime).
+function caseCard(r){
+  const ok = r.verdict==='Accepted';
+  const name = (r.hidden?'Hidden':'Public')+' test '+r.index;
+  const meta = []; if(r.timeMs!=null) meta.push(r.timeMs+' ms');
+  meta.push(r.memoryKb!=null ? (Math.round(r.memoryKb/102.4)/10+' MB') : 'mem —');
+  const head = `<div class="tcase-head"><span class="dot ${ok?'ok':'bad'}"></span><b>${esc(name)}</b>`+
+    `<span class="pill ${ok?'pill-easy':'pill-hard'}" style="margin-left:6px">${esc(r.verdict)}</span>`+
+    `<span class="grow"></span><span class="muted" style="font-size:12px">${meta.join(' · ')}</span></div>`;
+  let body='';
+  if(!ok){
+    const col=(lab,val,cls)=>`<div class="diffcol"><div class="muted">${lab}</div><pre class="code ${cls||''}">${esc(String(val==null?'':val).replace(/\s+$/,''))||'(empty)'}</pre></div>`;
+    body = `<div class="diffwrap">${col('Input',r.input)}${col('Expected',r.expected)}${col('Your output',r.got,'bad-out')}</div>`+
+      (r.stderr?`<div class="muted" style="margin-top:6px">stderr</div><pre class="code">${esc(r.stderr)}</pre>`:'');
+  }
+  return `<div class="tcase ${ok?'':'tcase-fail'}">${head}${body}</div>`;
+}
 
 async function doRun(id){ const res=document.getElementById('results'); res.innerHTML='<div class="muted">Running sample…</div>';
   const { body:out } = await apiPost('/api/run',{ problemId:id, language:val('lang'), code:getCode() });
@@ -250,8 +299,13 @@ async function doRun(id){ const res=document.getElementById('results'); res.inne
   res.innerHTML='<div class="muted" style="margin-bottom:4px">Sample result</div>'+out.results.map(verdictRow).join(''); }
 
 async function doSubmit(id){ const res=document.getElementById('results'); res.innerHTML='<div class="muted">Judging all tests…</div>';
-  const { status, body:out } = await apiPost('/api/submit',{ problemId:id, language:val('lang'), code:getCode(), flags:{ tabSwitches:proctor.tab, pasteAttempts:proctor.paste } });
+  try{ localStorage.setItem('tb_code_'+id, getCode()); }catch(e){}   // preserve work so it is never lost (#3)
+  let resp;
+  try{ resp = await apiPost('/api/submit',{ problemId:id, language:val('lang'), code:getCode(), practice: !examMode, flags:{ tabSwitches:proctor.tab, pasteAttempts:proctor.paste } }); }
+  catch(e){ res.innerHTML='<div class="row"><span class="dot bad"></span>Network error — your code is safe. Please try Submit again.</div>'; return; }
+  const { status, body:out } = resp;
   if(status===401){ alert('Please log in again.'); renderAuth('login'); return; }
+  if(!out || status>=500){ res.innerHTML='<div class="row"><span class="dot bad"></span>The judge could not process this submission. Your code is preserved — please try again.</div>'; return; }
   renderFeedback(await apiGet('/api/problems/'+id), out); }
 
 // ---------- FEEDBACK ----------
@@ -259,6 +313,20 @@ function renderFeedback(d,out){
   stopTimer();
   if(out.overall==='Language Unavailable'){ alert(out.note); return; }
   const pass = out.overall==='Accepted'; const fb = out.feedback||{};
+  const results = out.results||[];
+  const pub = results.filter(r=>!r.hidden), hidden = results.filter(r=>r.hidden);
+  const times = results.map(r=>r.timeMs).filter(x=>x!=null);
+  const maxT = times.length?Math.max(...times):null, sumT = times.reduce((a,b)=>a+(b||0),0);
+  const hiddenPass = hidden.filter(r=>r.verdict==='Accepted').length;
+  const mems = results.map(r=>r.memoryKb).filter(x=>x!=null);
+  const maxMem = mems.length?Math.max(...mems):null;
+  const statTiles = `<div class="fbstats">`+
+    `<div class="fbstat"><div class="v">${out.passed}/${out.total}</div><div class="l">Tests passed</div></div>`+
+    `<div class="fbstat"><div class="v">${maxT!=null?maxT+' ms':'—'}</div><div class="l">Slowest test</div></div>`+
+    `<div class="fbstat"><div class="v">${sumT} ms</div><div class="l">Total runtime</div></div>`+
+    `<div class="fbstat"><div class="v">${maxMem!=null?(Math.round(maxMem/102.4)/10+' MB'):'—'}</div><div class="l">Peak memory</div></div>`+
+    (hidden.length?`<div class="fbstat"><div class="v">${hiddenPass}/${hidden.length}</div><div class="l">Hidden passed</div></div>`:'')+
+    `</div>`;
   app.innerHTML = `
     <div class="test-top">
       <button class="btn btn-ghost" onclick="renderList()">← Problems</button>
@@ -271,9 +339,11 @@ function renderFeedback(d,out){
       <div class="tab active" data-p="fp1">What happened</div>
       <div class="tab" data-p="fp2">Correct solution</div>
       <div class="tab" data-p="fp3">How to improve</div></div>
-    <div class="pane active" id="fp1"><p>${esc(fb.summary||'')}</p>
-      <div class="muted" style="margin:8px 0 4px">Passed <b>${out.passed}</b> of <b>${out.total}</b> test cases (public + hidden)</div>
-      <div>${out.results.map(verdictRow).join('')}</div></div>
+    <div class="pane active" id="fp1">${fb.summary?`<p>${esc(fb.summary)}</p>`:''}
+      ${statTiles}
+      ${pub.length?`<h3 class="fbsec">Public tests</h3>${pub.map(caseCard).join('')}`:''}
+      ${hidden.length?`<h3 class="fbsec">Hidden tests <span class="muted" style="font-weight:400;font-size:12px">— ${hiddenPass}/${hidden.length} passed</span></h3>${hidden.map(caseCard).join('')}`:''}
+    </div>
     <div class="pane" id="fp2">${renderSolutions(fb.solutions, fb.timeComplexity, fb.spaceComplexity)}</div>
     <div class="pane" id="fp3">${((fb.improve&&fb.improve.videos)||[]).map(v=>`<span class="chip">▶ ${esc(v)}</span>`).join('')}
       <p class="muted" style="margin-top:12px">${esc((fb.improve&&fb.improve.note)||'')}</p></div>`;
