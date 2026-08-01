@@ -162,6 +162,38 @@ async function handleApi(req, res, url) {
       avgScore: avg, problems: byProblem, recent: subs.slice(-8).reverse() });
   }
 
+  // ---- PER-PROBLEM RANKING / COMPARISON (#13) ----
+  {
+    const prm = url.match(/^\/api\/problem-rank\/([^/]+)$/);
+    if (req.method === 'GET' && prm) {
+      const me = currentUser(req); if (!me) return sendJSON(res, 401, { error: 'login required' });
+      const subs = auth.submissionsForProblem(prm[1]);
+      // Best submission per user: highest score, tie-broken by lowest runtime.
+      const byUser = {};
+      for (const s of subs) {
+        const cur = byUser[s.user_id];
+        const better = !cur || s.score > cur.score ||
+          (s.score === cur.score && (s.runtime_ms == null ? Infinity : s.runtime_ms) < (cur.runtime_ms == null ? Infinity : cur.runtime_ms));
+        if (better) byUser[s.user_id] = s;
+      }
+      const ranked = Object.values(byUser).sort((a, b) =>
+        b.score - a.score || (a.runtime_ms == null ? Infinity : a.runtime_ms) - (b.runtime_ms == null ? Infinity : b.runtime_ms));
+      const myBest = byUser[me.id] || null;
+      const myRank = myBest ? ranked.findIndex((x) => x.user_id === me.id) + 1 : null;
+      const rts = subs.filter((s) => s.score === 100 && s.runtime_ms != null).map((s) => s.runtime_ms);
+      const bestRt = rts.length ? Math.min(...rts) : null;
+      const avgRt = rts.length ? Math.round(rts.reduce((a, b) => a + b, 0) / rts.length) : null;
+      const langDist = {};
+      for (const s of subs) if (s.language) langDist[s.language] = (langDist[s.language] || 0) + 1;
+      return sendJSON(res, 200, {
+        totalStudents: ranked.length, totalSubmissions: subs.length, rank: myRank,
+        your: myBest ? { score: myBest.score, runtimeMs: myBest.runtime_ms } : null,
+        runtime: { your: myBest ? myBest.runtime_ms : null, best: bestRt, avg: avgRt },
+        langDist,
+      });
+    }
+  }
+
   // ---- GAMIFICATION ----
   if (req.method === 'GET' && url === '/api/gamify') {
     const me = currentUser(req); if (!me) return sendJSON(res, 401, { error: 'login required' });

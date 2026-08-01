@@ -346,7 +346,8 @@ function renderFeedback(d,out){
     <div class="tabs">
       <div class="tab active" data-p="fp1">What happened</div>
       <div class="tab" data-p="fp2">Correct solution</div>
-      <div class="tab" data-p="fp3">How to improve</div></div>
+      <div class="tab" data-p="fp3">How to improve</div>
+      <div class="tab" data-p="fp4">Rank &amp; compare</div></div>
     <div class="pane active" id="fp1">${fb.summary?`<p>${esc(fb.summary)}</p>`:''}
       ${statTiles}
       ${pub.length?`<h3 class="fbsec">Public tests</h3>${pub.map(caseCard).join('')}`:''}
@@ -354,10 +355,33 @@ function renderFeedback(d,out){
     </div>
     <div class="pane" id="fp2">${renderSolutions(fb.solutions, fb.timeComplexity, fb.spaceComplexity)}</div>
     <div class="pane" id="fp3">${((fb.improve&&fb.improve.videos)||[]).map(v=>`<span class="chip">▶ ${esc(v)}</span>`).join('')}
-      <p class="muted" style="margin-top:12px">${esc((fb.improve&&fb.improve.note)||'')}</p></div>`;
+      <p class="muted" style="margin-top:12px">${esc((fb.improve&&fb.improve.note)||'')}</p></div>
+    <div class="pane" id="fp4"><div class="muted">Loading ranking…</div></div>`;
   document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{ document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
     document.querySelectorAll('.pane').forEach(p=>p.classList.remove('active')); t.classList.add('active');
     document.getElementById(t.dataset.p).classList.add('active'); });
+  loadRanking(d.meta&&d.meta.id);
+}
+// Per-problem ranking + runtime comparison + language distribution (#13).
+async function loadRanking(id){
+  const el=document.getElementById('fp4'); if(!el||!id) return;
+  let r; try{ r=await apiGet('/api/problem-rank/'+id); }catch(e){ r=null; }
+  if(!r){ el.innerHTML='<p class="muted">Ranking is not available yet.</p>'; return; }
+  const rt=r.runtime||{}; const mx=Math.max(rt.your||0, rt.avg||0, rt.best||0)||1;
+  const bar=(label,val)=>{ const pct=val==null?0:Math.round((val/mx)*100);
+    return `<div class="cmprow"><span class="cmpl">${label}</span><div class="track"><i style="width:${Math.max(4,pct)}%"></i></div><b>${val==null?'—':val+' ms'}</b></div>`; };
+  const langs=Object.entries(r.langDist||{}).sort((a,b)=>b[1]-a[1]);
+  const langTotal=langs.reduce((a,x)=>a+x[1],0)||1;
+  el.innerHTML=`
+    <div class="fbstats">
+      <div class="fbstat"><div class="v">${r.rank?('#'+r.rank):'—'}</div><div class="l">Your rank${r.totalStudents?(' of '+r.totalStudents):''}</div></div>
+      <div class="fbstat"><div class="v">${r.your&&r.your.runtimeMs!=null?r.your.runtimeMs+' ms':'—'}</div><div class="l">Your runtime</div></div>
+      <div class="fbstat"><div class="v">${rt.best!=null?rt.best+' ms':'—'}</div><div class="l">Best runtime</div></div>
+    </div>
+    <h3 class="fbsec">Runtime vs others</h3>
+    ${bar('You',rt.your)}${bar('Average',rt.avg)}${bar('Best',rt.best)}
+    <h3 class="fbsec">Language distribution <span class="muted" style="font-weight:400;font-size:12px">— ${r.totalSubmissions||0} submissions</span></h3>
+    ${langs.length?langs.map(x=>{const pct=Math.round(x[1]/langTotal*100);return `<div class="cmprow"><span class="cmpl">${esc(x[0])}</span><div class="track"><i style="width:${Math.max(4,pct)}%"></i></div><b>${pct}%</b></div>`;}).join(''):'<p class="muted">No submissions yet.</p>'}`;
 }
 function copyRef(){ const t=document.getElementById('refcode').innerText; navigator.clipboard&&navigator.clipboard.writeText(t); }
 

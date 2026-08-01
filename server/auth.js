@@ -79,6 +79,8 @@ const subRow = (r) => ({ userId: r.user_id, problemId: r.problem_id, title: r.ti
   language: r.language, score: r.score, overall: r.overall, at: r.at, violations: r.violations || 0 });
 const userSubmissions = (userId) => db.prepare('SELECT * FROM submissions WHERE user_id=? ORDER BY at').all(userId).map(subRow);
 const allSubmissions = () => db.prepare('SELECT * FROM submissions').all().map(subRow);
+const submissionsForProblem = (problemId) =>
+  db.prepare('SELECT user_id,language,score,overall,runtime_ms,memory_kb,at FROM submissions WHERE problem_id=?').all(problemId);
 
 module.exports = { hashPassword, verifyPassword, publicUser, createUser, updateUser, findByEmail,
-  findById, setPassword, startSession, endSession, userForToken, addSubmission, userSubmissions, allSubmissions, allUsers };
+  findById, setPassword, startSession, endSession, userForToken, addSubmission, userSubmissions, allSubmissions, submissionsForProblem, allUsers };

@@ -58,6 +58,10 @@ select{ font-size:12.5px; padding:6px 9px; border:1px solid var(--line); border-
 .diffwrap{ display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:10px; margin-top:10px; }
 .diffcol .code{ margin-top:4px; max-height:180px; overflow:auto; }
 .code.bad-out{ background:#3a1e1e; }
+.cmprow{ display:flex; align-items:center; gap:10px; margin:6px 0; font-size:13px; }
+.cmprow .cmpl{ min-width:74px; }
+.cmprow .track{ flex:1; }
+.cmprow b{ min-width:56px; text-align:right; }
 /* feedback */
 .scorecard{ display:flex; align-items:center; gap:16px; padding:14px 16px; border-radius:10px;
             background:#eaf6ec; border:1px solid #bfe3c6; }
