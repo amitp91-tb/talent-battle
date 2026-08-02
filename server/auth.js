@@ -68,7 +68,15 @@ function startSession(userId) {
   return t;
 }
 const endSession = (t) => { sessions.delete(t); try { db.prepare('DELETE FROM sessions WHERE token=?').run(t); } catch (e) {} return true; };
-const userForToken = (t) => { const id = sessions.get(t); return id ? findById(id) : null; };
+const userForToken = (t) => {
+  let id = sessions.get(t);
+  if (!id) {
+    // Fall back to the DB: a session created on another pm2 worker or before this
+    // process started must still resolve, otherwise the user is spuriously logged out.
+    try { const r = db.prepare('SELECT user_id FROM sessions WHERE token=?').get(t); if (r) { id = r.user_id; sessions.set(t, id); } } catch (e) {}
+  }
+  return id ? findById(id) : null;
+};
 
 function addSubmission(s) {
   db.prepare(`INSERT INTO submissions (user_id,problem_id,title,tags,language,score,overall,at,source,violations,runtime_ms,memory_kb)

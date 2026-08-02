@@ -523,7 +523,7 @@ async function boot(){
   renderUserbar();
   LANGS = await apiGet('/api/languages');
   PROBLEMS = await apiGet('/api/problems');
-  if(ME.role==='admin') renderAdminHome(); else if(ME.role==='subadmin') renderFaculty(); else renderList();
+  if(ME.role==='admin') renderAdminHome(); else if(ME.role==='subadmin') renderFaculty(); else renderDashboard();
 }
 document.addEventListener('keydown', (e)=>{
   if(e.key==='Tab' && e.target && e.target.classList && e.target.classList.contains('editor')){
