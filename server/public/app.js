@@ -855,6 +855,7 @@ async function renderStudentTests(){
     <div class="plist" style="margin-top:14px">${rows}</div>`;
 }
 async function openTest(id){
+  window.__examBack=()=>openTest(id);
   const t = await apiGet('/api/tests/'+id);
   const rows = (t.questions||[]).map(q=>`
     <div class="card prow" onclick="openExamProblem('${q.id}')">
@@ -1068,6 +1069,7 @@ async function renderContests(){
 }
 async function openContest(id){
   stopTimer();
+  window.__examBack=()=>openContest(id);
   const c=await apiGet('/api/contests/'+id); lastStandings=(c.standings||[]);
   const probs=(c.problems||[]).map((p,i)=>`<div class="card prow" onclick="openExamProblem('${p.id}')">
       <div><div class="t">${String.fromCharCode(65+i)}. ${esc(p.title)}</div></div>
@@ -1133,6 +1135,10 @@ async function renderReports(){ stopTimer();
 
 
 // ---------- EXAM MODE (fullscreen lockdown for tests & contests) ----------
+// Return to wherever the student launched the test from — WITHIN the SPA.
+// (Previously Cancel called history.back(), which left the app entirely and
+// could land on an unrelated site in the browser's history.)
+function examCancel(){ if(typeof window.__examBack==='function'){ try{ window.__examBack(); return; }catch(e){} } renderDashboard(); }
 async function openExamProblem(id){
   stopTimer();
   let r=await fetch('/api/problems/'+id); if(!r.ok) r=await fetch('/api/challenge/'+id);
@@ -1149,7 +1155,7 @@ async function openExamProblem(id){
       <li>Submitting ends the test.</li>
     </ul>
     <button class="btn btn-primary" onclick="beginExam()">Start Test in Full Screen</button>
-    <button class="btn btn-ghost" style="margin-left:8px" onclick="history.length>1?history.back():renderList()">Cancel</button>
+    <button class="btn btn-ghost" style="margin-left:8px" onclick="examCancel()">Cancel</button>
   </div></div>`;
 }
 function beginExam(){
