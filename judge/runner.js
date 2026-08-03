@@ -54,6 +54,20 @@ function execWithLimits(cmd, args, { cwd, input = '', timeoutMs, memoryKb }) {
       child.kill('SIGKILL');
     }, timeoutMs);
 
+    // Peak-memory probe (Linux only): sample the kernel's high-water RSS counter
+    // for the running process. Read-only — it never changes how the child is
+    // spawned, timed, or killed. On non-Linux (no /proc) it stays null and the
+    // UI falls back to "—". `exec "$0"` above means child.pid is the program.
+    let peakKb = null; let memTimer = null;
+    const readMem = () => {
+      try {
+        const s = fs.readFileSync('/proc/' + child.pid + '/status', 'utf8');
+        const m = s.match(/VmHWM:\s*(\d+)\s*kB/) || s.match(/VmRSS:\s*(\d+)\s*kB/);
+        if (m) { const kb = parseInt(m[1], 10); if (peakKb == null || kb > peakKb) peakKb = kb; }
+      } catch (e) { /* process gone or not Linux — ignore */ }
+    };
+    if (process.platform === 'linux') { readMem(); memTimer = setInterval(readMem, 6); }
+
     if (input) child.stdin.write(input);
     child.stdin.end();
 
@@ -64,14 +78,14 @@ function execWithLimits(cmd, args, { cwd, input = '', timeoutMs, memoryKb }) {
     child.stderr.on('data', (d) => { stderr += d; });
 
     child.on('error', (err) => {
-      clearTimeout(killer);
+      clearTimeout(killer); if (memTimer) clearInterval(memTimer);
       resolve({ stdout, stderr: String(err), exitCode: 127, signal: null,
-                timedOut, durationMs: Date.now() - started });
+                timedOut, durationMs: Date.now() - started, memoryKb: peakKb });
     });
     child.on('close', (exitCode, signal) => {
-      clearTimeout(killer);
+      clearTimeout(killer); if (memTimer) clearInterval(memTimer);
       resolve({ stdout, stderr, exitCode, signal, timedOut,
-                durationMs: Date.now() - started });
+                durationMs: Date.now() - started, memoryKb: peakKb });
     });
   });
 }
