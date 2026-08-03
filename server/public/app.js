@@ -293,7 +293,8 @@ function caseCard(r){
 }
 
 async function doRun(id){ const res=document.getElementById('results'); res.innerHTML='<div class="muted">Running sample…</div>';
-  const { body:out } = await apiPost('/api/run',{ problemId:id, language:val('lang'), code:getCode() });
+  const { status, body:out } = await apiPost('/api/run',{ problemId:id, language:val('lang'), code:getCode() });
+  if(status>=500 || !out || !out.results){ res.innerHTML=`<div class="row"><span class="dot bad"></span>${esc((out&&out.note)||'The judge is busy — please try Run again in a few seconds.')}</div>`; return; }
   if(out.overall==='Language Unavailable'){ res.innerHTML=`<div class="row"><span class="dot bad"></span>${esc(out.note)}</div>`; return; }
   if(out.overall==='Compilation Error'){ res.innerHTML=`<div class="row"><span class="dot bad"></span><b>Compilation Error</b></div><pre class="code">${esc((out.compileOutput||'').slice(0,600))}</pre>`; return; }
   res.innerHTML='<div class="muted" style="margin-bottom:4px">Sample result</div>'+out.results.map(verdictRow).join(''); }

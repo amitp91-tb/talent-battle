@@ -18,6 +18,7 @@ const contests = require('./contests');
 const ai = require('./ai');
 const crypto = require('crypto');
 const { db } = require('./db');
+const jobQueue = require('./queue');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -133,10 +134,18 @@ async function handleApi(req, res, url) {
     if (q.mode === 'function' && q.harness && q.harness[body.language] && q.harness[body.language].driver) {
       effCode = String(q.harness[body.language].driver).replace('{{SOLUTION}}', body.code || '');
     }
-    const result = await judge({ language: body.language, code: effCode, testCases: cases,
-      timeLimitMs: q.timeLimitMs, memoryMb: q.memoryMb, checker: q.checker, floatTolerance: q.floatTolerance,
-      // Only reveal hidden-case details in practice mode (never during a proctored exam/contest).
-      revealHidden: isSubmit && body.practice === true });
+    let result;
+    try {
+      // Bound concurrent compile/run jobs so a burst can't thrash the box.
+      result = await jobQueue.run(() => judge({ language: body.language, code: effCode, testCases: cases,
+        timeLimitMs: q.timeLimitMs, memoryMb: q.memoryMb, checker: q.checker, floatTolerance: q.floatTolerance,
+        // Only reveal hidden-case details in practice mode (never during a proctored exam/contest).
+        revealHidden: isSubmit && body.practice === true }));
+    } catch (e) {
+      if (e && e.overloaded) return sendJSON(res, 503, { overall: 'Server busy', passed: 0, total: 0,
+        results: [], note: 'The judge is busy right now — please try again in a few seconds.' });
+      throw e;
+    }
     if (isSubmit) {
       const feedback = buildFeedback2(q, result);
       const flags = body.flags || {};
@@ -157,9 +166,15 @@ async function handleApi(req, res, url) {
     const b = await readBody(req);
     if (!AVAILABLE[b.language]) return sendJSON(res, 200, { overall: 'Language Unavailable',
       note: `${LANGUAGES[b.language]?.label || b.language} is not installed on this server.` });
-    const result = await judge({ language: b.language, code: b.code || '',
-      testCases: [{ input: b.input || '', expected: '', hidden: false }],
-      timeLimitMs: 5000, memoryMb: 256, checker: 'exact' });
+    let result;
+    try {
+      result = await jobQueue.run(() => judge({ language: b.language, code: b.code || '',
+        testCases: [{ input: b.input || '', expected: '', hidden: false }],
+        timeLimitMs: 5000, memoryMb: 256, checker: 'exact' }));
+    } catch (e) {
+      if (e && e.overloaded) return sendJSON(res, 503, { overall: 'Server busy', note: 'The judge is busy — please try again in a few seconds.' });
+      throw e;
+    }
     if (result.overall === 'Compilation Error')
       return sendJSON(res, 200, { overall: 'Compilation Error', compileOutput: result.compileOutput });
     const r = (result.results && result.results[0]) || {};
