@@ -43,6 +43,9 @@ CREATE TABLE IF NOT EXISTS tests (
 CREATE TABLE IF NOT EXISTS sessions (
   token TEXT PRIMARY KEY, user_id TEXT, created_at INTEGER
 );
+CREATE TABLE IF NOT EXISTS ai_cache (
+  k TEXT PRIMARY KEY, kind TEXT, json TEXT, created_at INTEGER
+);
 `);
 
 // small JSON helpers for columns that hold arrays/objects

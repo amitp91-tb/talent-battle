@@ -15,6 +15,9 @@ const groups = require('./groups');
 const tests = require('./tests');
 const challenge = require('./challenge');
 const contests = require('./contests');
+const ai = require('./ai');
+const crypto = require('crypto');
+const { db } = require('./db');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -204,6 +207,30 @@ async function handleApi(req, res, url) {
         runtime: { your: myBest ? myBest.runtime_ms : null, best: bestRt, avg: avgRt },
         langDist,
       });
+    }
+  }
+
+  // ---- AI COMPLEXITY ANALYSIS (#7) ----
+  if (req.method === 'POST' && url === '/api/analyze-complexity') {
+    const me = currentUser(req); if (!me) return sendJSON(res, 401, { error: 'login required' });
+    const b = await readBody(req);
+    const q = findProblem(b.problemId);
+    const code = String(b.code || ''); const language = String(b.language || '');
+    if (!q || !code.trim()) return sendJSON(res, 200, { available: false });
+    // Cache by problem + language + normalized code so identical submissions never re-bill.
+    const key = 'cx_' + crypto.createHash('sha256')
+      .update((b.problemId || '') + '|' + language + '|' + code.replace(/\s+/g, ' ').trim()).digest('hex');
+    try { const row = db.prepare('SELECT json FROM ai_cache WHERE k=?').get(key);
+      if (row) return sendJSON(res, 200, { available: true, cached: true, ...JSON.parse(row.json) }); } catch (e) {}
+    if (!ai.enabled()) return sendJSON(res, 200, { available: false, reason: 'not-configured' });
+    try {
+      const r = await ai.analyzeComplexity({ language, code, title: q.title, statement: q.statement });
+      try { db.prepare('INSERT OR REPLACE INTO ai_cache (k,kind,json,created_at) VALUES (?,?,?,?)')
+        .run(key, 'complexity', JSON.stringify(r), Date.now()); } catch (e) {}
+      return sendJSON(res, 200, { available: true, ...r });
+    } catch (e) {
+      console.error('analyze-complexity:', e.message);
+      return sendJSON(res, 200, { available: false, reason: 'error' });
     }
   }
 

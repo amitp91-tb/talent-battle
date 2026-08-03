@@ -299,6 +299,7 @@ async function doRun(id){ const res=document.getElementById('results'); res.inne
   res.innerHTML='<div class="muted" style="margin-bottom:4px">Sample result</div>'+out.results.map(verdictRow).join(''); }
 
 async function doSubmit(id){ const res=document.getElementById('results'); res.innerHTML='<div class="muted">Judging all tests…</div>';
+  window.__lastSubmit = { id, language: val('lang'), code: getCode() };   // for the complexity analysis card
   try{ localStorage.setItem('tb_code_'+id, getCode()); }catch(e){}   // preserve work so it is never lost (#3)
   let resp;
   try{ resp = await apiPost('/api/submit',{ problemId:id, language:val('lang'), code:getCode(), practice: !examMode, flags:{ tabSwitches:proctor.tab, pasteAttempts:proctor.paste } }); }
@@ -354,13 +355,37 @@ function renderFeedback(d,out){
       ${hidden.length?`<h3 class="fbsec">Hidden tests <span class="muted" style="font-weight:400;font-size:12px">— ${hiddenPass}/${hidden.length} passed</span></h3>${hidden.map(caseCard).join('')}`:''}
     </div>
     <div class="pane" id="fp2">${renderSolutions(fb.solutions, fb.timeComplexity, fb.spaceComplexity)}</div>
-    <div class="pane" id="fp3">${((fb.improve&&fb.improve.videos)||[]).map(v=>`<span class="chip">▶ ${esc(v)}</span>`).join('')}
+    <div class="pane" id="fp3">
+      <div id="cxbox" class="cxbox"></div>
+      ${((fb.improve&&fb.improve.videos)||[]).map(v=>`<span class="chip">▶ ${esc(v)}</span>`).join('')}
       <p class="muted" style="margin-top:12px">${esc((fb.improve&&fb.improve.note)||'')}</p></div>
     <div class="pane" id="fp4"><div class="muted">Loading ranking…</div></div>`;
   document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{ document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
     document.querySelectorAll('.pane').forEach(p=>p.classList.remove('active')); t.classList.add('active');
     document.getElementById(t.dataset.p).classList.add('active'); });
   loadRanking(d.meta&&d.meta.id);
+  loadComplexity(d, fb);
+}
+// AI complexity analysis (#7). Falls back to the problem's static complexity when AI is off.
+async function loadComplexity(d, fb){
+  const el=document.getElementById('cxbox'); if(!el) return;
+  const id = d && d.meta && d.meta.id; const ls = window.__lastSubmit;
+  const staticCx = (fb && (fb.timeComplexity||fb.spaceComplexity))
+    ? `<div class="cxrow">${fb.timeComplexity?`<span class="cxbadge">⏱ Time: ${esc(fb.timeComplexity)}</span>`:''}${fb.spaceComplexity?`<span class="cxbadge">💾 Space: ${esc(fb.spaceComplexity)}</span>`:''}</div>`
+    : '';
+  if(!ls || ls.id!==id || !ls.code){ el.innerHTML = staticCx; return; }
+  el.innerHTML='<div class="muted">Analyzing your solution’s complexity…</div>';
+  let r=null; try{ const resp=await apiPost('/api/analyze-complexity',{ problemId:id, language:ls.language, code:ls.code }); r=resp.body; }catch(e){ r=null; }
+  if(!r || !r.available){ el.innerHTML = staticCx; return; }
+  const conf = (r.confidence!=null)?`<span class="muted" style="font-weight:400;font-size:12px"> · ${r.confidence}% confidence</span>`:'';
+  const sugg = (r.suggestions&&r.suggestions.length)
+    ? `<h3 class="fbsec">Optimization ideas</h3><ul class="cxsug">${r.suggestions.map(s=>`<li>${esc(s)}</li>`).join('')}</ul>` : '';
+  el.innerHTML = `
+    <h3 class="fbsec">Complexity analysis${conf}</h3>
+    <div class="cxrow"><span class="cxbadge">⏱ Time: ${esc(r.time)}</span>${r.space?`<span class="cxbadge">💾 Space: ${esc(r.space)}</span>`:''}</div>
+    ${r.explanation?`<p style="margin:8px 0 4px">${esc(r.explanation)}</p>`:''}
+    ${sugg}
+    <p class="muted" style="font-size:11px;margin-top:8px">AI-estimated${r.cached?' · cached':''} — guidance, not a grade.</p>`;
 }
 // Per-problem ranking + runtime comparison + language distribution (#13).
 async function loadRanking(id){
