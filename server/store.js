@@ -90,4 +90,25 @@ function setSolutionsByTitle(title, solutions){
   return true;
 }
 
+// Backfill multi-language solutions for Question-Bank problems (All Problems, and
+// the questions used by Tests/Contests) from bank-solutions.json, matched by title.
+// Idempotent and non-destructive: only fills in languages a question is missing,
+// never overwrites an existing solution. Runs every startup, like the challenge backfill.
+(function backfillBankSolutions() {
+  let bank = {};
+  try { bank = JSON.parse(fs.readFileSync(path.join(__dirname, 'bank-solutions.json'), 'utf8')); } catch { return; }
+  const byTitle = db.prepare('SELECT id, solutions FROM questions WHERE title=?');
+  const upd = db.prepare('UPDATE questions SET solutions=? WHERE id=?');
+  for (const title of Object.keys(bank)) {
+    for (const row of byTitle.all(title)) {
+      let cur = {}; try { cur = JSON.parse(row.solutions || '{}'); } catch {}
+      let changed = false;
+      for (const lang of Object.keys(bank[title])) {
+        if (!cur[lang] || !String(cur[lang]).trim()) { cur[lang] = bank[title][lang]; changed = true; }
+      }
+      if (changed) upd.run(JSON.stringify(cur), row.id);
+    }
+  }
+})();
+
 module.exports = { listPublic, getById, getPublic, toTestCases, listAdmin, getAdmin: getById, createQuestion, deleteQuestion, setSolutionsByTitle };
