@@ -19,6 +19,7 @@ const ai = require('./ai');
 const crypto = require('crypto');
 const { db } = require('./db');
 const jobQueue = require('./queue');
+const harnessGen = require('./harness-gen');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -132,6 +133,15 @@ async function handleApi(req, res, url) {
     const cases = isSubmit ? all : all.filter((t) => !t.hidden);
     let effCode = body.code || '';
     if (q.mode === 'function' && q.harness && q.harness[body.language] && q.harness[body.language].driver) {
+      // Signature guard (#2): the student must still define the expected function.
+      // Catch a deleted/renamed signature with a clear message instead of a cryptic compile error.
+      const starter = String(q.harness[body.language].starter || '');
+      const fm = starter.match(/([A-Za-z_]\w*)\s*\(/);
+      const fn = fm && fm[1];
+      if (fn && !new RegExp('\\b' + fn.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\(').test(String(body.code || ''))) {
+        return sendJSON(res, 200, { overall: 'Compilation Error', passed: 0, total: cases.length, results: [],
+          compileOutput: `Your code must define the function "${fn}(...)". The signature looks changed or removed — restore the starter template and write your logic inside it.` });
+      }
       effCode = String(q.harness[body.language].driver).replace('{{SOLUTION}}', body.code || '');
     }
     let result;
@@ -412,6 +422,17 @@ async function handleApi(req, res, url) {
     if (!isAdmin(me)) return sendJSON(res, 403, { error: 'admin only' });
 
     if (req.method === 'GET' && url === '/api/admin/questions') return sendJSON(res, 200, store.listAdmin());
+    // Generate a function-mode harness (starter + hidden driver, all languages) from a signature.
+    if (req.method === 'POST' && url === '/api/admin/gen-harness') {
+      const b = await readBody(req);
+      try {
+        const spec = { fn: (String(b.fn || 'solve').trim().match(/^[A-Za-z_]\w*$/) ? b.fn.trim() : 'solve'),
+          params: (Array.isArray(b.params) ? b.params : []).map((p) => ({ name: String(p.name || '').trim(), type: String(p.type || 'int') }))
+            .filter((p) => p.name),
+          returns: String(b.returns || 'int') };
+        return sendJSON(res, 200, { ok: true, harness: harnessGen.generate(spec), supported: harnessGen.SUPPORTED_TYPES });
+      } catch (e) { return sendJSON(res, 400, { error: e.message || 'bad signature' }); }
+    }
     const am = url.match(/^\/api\/admin\/questions\/([^/]+)$/);
     if (req.method === 'GET' && am) { const q = store.getAdmin(am[1]);
       return q ? sendJSON(res, 200, q) : sendJSON(res, 404, { error: 'not found' }); }

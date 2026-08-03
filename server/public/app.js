@@ -642,6 +642,18 @@ function renderQuestionForm(){
       <div id="harness-section" style="display:none">
         <h2 style="margin-top:16px">Function harness <span class="muted" style="font-size:12px">(per language)</span></h2>
         <p class="muted" style="margin-top:0">For each language you support: <b>Starter</b> = the stub the student edits; <b>Driver</b> = hidden code that reads the input, calls their function, and prints the result — put <code>{{SOLUTION}}</code> where the student's code goes.</p>
+        <div class="card" style="background:#eef6ff;margin-bottom:12px">
+          <div style="font-weight:700;margin-bottom:4px">⚡ Generate from a function signature</div>
+          <p class="muted" style="margin-top:0;font-size:12px">Define the function — we generate the starter + hidden driver (input parsing, the call, and output) for all four languages. You can still tweak them below.</p>
+          <div class="split">
+            <div class="field"><label>Function name</label><input id="sig-fn" value="solve"></div>
+            <div class="field"><label>Return type</label><select id="sig-ret">${TYPE_OPTS}</select></div>
+          </div>
+          <label>Parameters</label>
+          <div id="sig-params"></div>
+          <button class="btn btn-ghost" type="button" onclick="sigAddParam()">+ Add parameter</button>
+          <div style="margin-top:8px"><button class="btn btn-primary" type="button" onclick="genHarness()">Generate harnesses ↓</button> <span id="sig-msg" class="muted" style="font-size:12px;margin-left:8px"></span></div>
+        </div>
         ${['python','cpp','java','javascript'].map(l=>`
           <div class="card" style="margin-bottom:10px;background:#fbf8f1">
             <div style="font-weight:700;margin-bottom:6px">${l}</div>
@@ -663,6 +675,32 @@ function renderQuestionForm(){
     </div>`;
   addCase('sample'); addCase('sample');
   for(let i=0;i<5;i++) addCase('hidden');
+  sigAddParam(); sigAddParam();
+}
+const HARNESS_TYPES=['int','long','double','bool','string','int[]','long[]','double[]','bool[]','string[]','int[][]','long[][]','double[][]'];
+const TYPE_OPTS=HARNESS_TYPES.map(t=>`<option value="${t}">${t}</option>`).join('');
+function sigAddParam(){
+  const box=document.getElementById('sig-params'); if(!box) return;
+  const div=document.createElement('div'); div.className='sigrow'; div.style.cssText='display:flex;gap:8px;margin-bottom:6px;align-items:center';
+  div.innerHTML=`<input class="sig-pname" placeholder="param name" style="flex:1"><select class="sig-ptype" style="flex:1">${TYPE_OPTS}</select><button class="btn btn-ghost" type="button" onclick="this.closest('.sigrow').remove()">✕</button>`;
+  box.appendChild(div);
+}
+async function genHarness(){
+  const msg=document.getElementById('sig-msg');
+  const fn=(val('sig-fn')||'solve').trim(), returns=val('sig-ret')||'int';
+  const params=[...document.querySelectorAll('#sig-params .sigrow')]
+    .map(r=>({name:r.querySelector('.sig-pname').value.trim(), type:r.querySelector('.sig-ptype').value}))
+    .filter(p=>p.name);
+  if(!params.length){ if(msg) msg.textContent='Add at least one parameter first.'; return; }
+  if(msg) msg.textContent='Generating…';
+  const { status, body }=await apiPost('/api/admin/gen-harness',{fn, params, returns});
+  if(status!==200 || !body.harness){ if(msg) msg.textContent=(body&&body.error)||'Could not generate.'; return; }
+  for(const l of ['python','cpp','java','javascript']){
+    const h=body.harness[l]; if(!h) continue;
+    const st=document.getElementById('hs-'+l), dr=document.getElementById('hd-'+l);
+    if(st) st.value=h.starter; if(dr) dr.value=h.driver;
+  }
+  if(msg) msg.textContent='✓ Filled starter + driver for all 4 languages — review below.';
 }
 function toggleQMode(){ const h=document.getElementById('harness-section'); if(h) h.style.display = val('q-mode')==='function'?'block':'none'; }
 async function submitQuestion(){
