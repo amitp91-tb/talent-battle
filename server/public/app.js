@@ -123,6 +123,28 @@ async function doRegister(){
 async function doLogout(){ await apiPost('/api/logout', {}); ME=null; stopTimer(); renderAuth('login'); }
 function renderDashOrHome(){ if(ME.role==='admin') renderAdminHome(); else if(ME.role==='subadmin') renderFaculty(); else renderDashboard(); }
 
+// ---- My Profile (view account details) ----
+async function renderProfile(){
+  stopTimer();
+  try{ const me=await apiGet('/api/me'); if(me && me.user) ME=me.user; }catch(e){}   // refresh (e.g. batch reassigned)
+  const u=ME||{};
+  const row=(label,val)=>`<div style="display:flex;padding:11px 0;border-bottom:1px solid var(--line)"><div style="width:190px;color:var(--muted)">${label}</div><div style="font-weight:600">${esc(val||'—')}</div></div>`;
+  const isStudent = u.role==='student';
+  app.innerHTML=`<h1>My Profile</h1>
+    <p class="muted">Your account details.${isStudent?' To change your college, branch or batch, contact your administrator.':''}</p>
+    <div class="card" style="max-width:580px">
+      ${row('Name', u.name)}
+      ${row('Email', u.email)}
+      ${row('Role', u.role)}
+      ${isStudent?row('Contact number', u.mobile):''}
+      ${isStudent?row('College', u.college):''}
+      ${isStudent?row('Branch', u.branch):''}
+      ${isStudent?row('Year of passing', u.yearOfPassing):''}
+      ${isStudent?row('Batch assigned', u.batch):''}
+      <div style="margin-top:16px"><button class="btn btn-ghost" onclick="renderChangePassword()">Change password</button></div>
+    </div>`;
+}
+
 // ---- Password: forced change on first login (temporary/admin-issued password) ----
 function renderForceChange(){
   userbar.innerHTML='';
@@ -235,7 +257,8 @@ function renderUserbar(){
     nav = items.join('');
   }
   userbar.innerHTML = `<nav>${nav}</nav>
-    <span class="who">${esc(ME.name)} · ${esc(ME.role)}</span>
+    <span class="who" onclick="renderProfile()" style="cursor:pointer" title="My profile">${esc(ME.name)} · ${esc(ME.role)}</span>
+    <button class="btn btn-ghost" onclick="renderProfile()">My Profile</button>
     <button class="btn btn-ghost" onclick="renderChangePassword()">Change password</button>
     <button class="btn btn-ghost" onclick="doLogout()">Log out</button>`;
 }
