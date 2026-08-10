@@ -1,7 +1,7 @@
 // app.js — single-page app with login accounts (students + faculty).
 const app = document.getElementById('app');
 const userbar = document.getElementById('userbar');
-let ME = null, LANGS = { available:{}, labels:{} }, PROBLEMS = [], timer = null, contestTimer = null, examMode = false, examSession = false;
+let ME = null, LANGS = { available:{}, labels:{} }, PROBLEMS = [], timer = null, contestTimer = null, examMode = false, examSession = false, examKind = null, cam = null;
 
 const starters = {
   python: "# Read all input, then print your answer.\nimport sys\ndata = sys.stdin.read().split()\n\n# TODO: compute the answer from `data`\nprint(\"your answer here\")",
@@ -392,7 +392,8 @@ async function doSubmit(id){ const res=document.getElementById('results'); res.i
   window.__lastSubmit = { id, language: val('lang'), code: getCode() };   // for the complexity analysis card
   try{ localStorage.setItem('tb_code_'+id, getCode()); }catch(e){}   // preserve work so it is never lost (#3)
   let resp;
-  try{ resp = await apiPost('/api/submit',{ problemId:id, language:val('lang'), code:getCode(), practice: !examMode, flags:{ tabSwitches:proctor.tab, pasteAttempts:proctor.paste } }); }
+  try{ resp = await apiPost('/api/submit',{ problemId:id, language:val('lang'), code:getCode(), practice: !examMode,
+    flags:{ tabSwitches:proctor.tab, pasteAttempts:proctor.paste, fullscreenExits:proctor.fs, copyBlocks:proctor.copy, cameraLost:proctor.cam } }); }
   catch(e){ res.innerHTML='<div class="row"><span class="dot bad"></span>Network error — your code is safe. Please try Submit again.</div>'; return; }
   const { status, body:out } = resp;
   if(status===401){ alert('Please log in again.'); renderAuth('login'); return; }
@@ -605,8 +606,8 @@ async function renderFaculty(){ stopTimer();
     ${(arr||[]).map(g=>`<tr><td>${esc(g.label)}</td><td>${g.students}</td><td>${g.avg}</td><td>${g.solved}</td><td>${status(g.avg)}</td></tr>`).join('')||'<tr><td colspan="5" class="muted">No data yet.</td></tr>'}</table></div>`;
   const batchNames = [...new Set((d.students||[]).map(s=>s.batch))];
   const filterOpts = '<option value="">All batches</option>'+batchNames.map(b=>`<option value="${esc(b)}">${esc(b)}</option>`).join('');
-  const rows = (d.students||[]).map(s=>`<tr data-batch="${esc(s.batch)}"><td>${esc(s.name)}</td><td>${esc(s.batch)}</td><td>${esc(s.branch)}</td><td>${esc(s.year)}</td><td>${s.avg}</td><td>${s.solved}</td><td>${s.attempts}</td><td>${s.flags?('<span class="badge b-imp">⚠ '+s.flags+'</span>'):'—'}</td><td>${status(s.avg)}</td></tr>`).join('')
-    || '<tr><td colspan="8" class="muted">No students yet.</td></tr>';
+  const rows = (d.students||[]).map(s=>`<tr data-batch="${esc(s.batch)}"><td>${esc(s.name)}</td><td>${esc(s.batch)}</td><td>${esc(s.branch)}</td><td>${esc(s.year)}</td><td>${s.avg}</td><td>${s.solved}</td><td>${s.attempts}</td><td>${s.flags?('<span class="badge b-imp">⚠ '+s.flags+'</span>'):'—'}</td><td>${status(s.avg)}</td><td>${s.id?`<button class="btn btn-ghost" style="padding:2px 8px" onclick="renderProctor('${s.id}','${esc(s.name).replace(/'/g,'')}')">📷 Camera</button>`:''}</td></tr>`).join('')
+    || '<tr><td colspan="10" class="muted">No students yet.</td></tr>';
   const weak = (d.weakTopics||[]).map(w=>`<div class="skill"><div class="r"><span>${esc(w.tag)}</span><span>${w.count} weak submissions</span></div>
     <div class="track"><i class="bad" style="width:${Math.min(100,w.count*15)}%"></i></div></div>`).join('') || '<p class="muted">Not enough data yet.</p>';
   app.innerHTML = `<h1>Results &amp; Analytics</h1><p class="muted">Showing: ${esc(d.scope||'')}</p>
@@ -626,12 +627,30 @@ async function renderFaculty(){ stopTimer();
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px"><h2 style="margin:0">Students</h2><span class="grow"></span>
         <button class="btn btn-ghost" onclick="exportResults()">Export CSV</button>
         <select id="an-filter" onchange="filterStudents()">${filterOpts}</select></div>
-      <table><tr><th>Student</th><th>Batch</th><th>Branch</th><th>Year</th><th>Avg</th><th>Solved</th><th>Attempts</th><th>Flags</th><th>Status</th></tr>
+      <table><tr><th>Student</th><th>Batch</th><th>Branch</th><th>Year</th><th>Avg</th><th>Solved</th><th>Attempts</th><th>Flags</th><th>Status</th><th>Proctoring</th></tr>
       <tbody id="an-rows">${rows}</tbody></table></div>
     <div class="card"><h2>Weakest topics</h2>${weak}</div>`;
 }
 function filterStudents(){ const v=document.getElementById('an-filter').value;
   document.querySelectorAll('#an-rows tr').forEach(tr=>{ tr.style.display=(!v||tr.dataset.batch===v)?'':'none'; }); }
+
+// ---------- ADMIN: PROCTORING VIEWER (webcam snapshots for a student) ----------
+async function renderProctor(userId, name){
+  stopTimer();
+  app.innerHTML = `<div class="test-top"><button class="btn btn-ghost" onclick="renderFaculty()">← Results</button></div>
+    <h1>Proctoring — ${esc(name||'')}</h1><div id="proc-body"><p class="muted">Loading snapshots…</p></div>`;
+  const r = await fetch('/api/proctor/shots/'+userId);
+  const body2 = await r.json().catch(()=>({}));
+  const shots = (body2.shots||[]);
+  if(r.status!==200){ document.getElementById('proc-body').innerHTML = `<p class="muted">${esc((body2&&body2.error)||'Could not load.')}</p>`; return; }
+  if(!shots.length){ document.getElementById('proc-body').innerHTML = '<p class="muted">No webcam snapshots recorded for this student yet. Snapshots appear here after they take a proctored Test.</p>'; return; }
+  const cards = shots.map(s=>`<figure style="margin:0">
+      <img src="/api/proctor/image/${s.id}" loading="lazy" style="width:100%;border-radius:8px;border:1px solid var(--line);background:#111" alt="snapshot">
+      <figcaption class="muted" style="font-size:11px;margin-top:2px">${new Date(s.at).toLocaleString()}${s.kind&&s.kind!=='interval'?(' · '+esc(s.kind)):''}</figcaption>
+    </figure>`).join('');
+  document.getElementById('proc-body').innerHTML = `<p class="muted">${shots.length} snapshot(s). Captured every ~30s during the test and on camera-loss events.</p>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px">${cards}</div>`;
+}
 
 // ---------- BOOT ----------
 async function boot(){
@@ -1011,6 +1030,7 @@ async function renderStudentTests(){
     <div class="plist" style="margin-top:14px">${rows}</div>`;
 }
 async function openTest(id){
+  window.__examKind='test';                 // hardened lockdown + camera
   window.__examBack=()=>openTest(id);
   const t = await apiGet('/api/tests/'+id);
   const rows = (t.questions||[]).map(q=>`
@@ -1161,13 +1181,16 @@ async function runCustom(){
 
 
 // ---------- ANTI-CHEATING / PROCTORING ----------
-let proctor={tab:0,paste:0,active:false};
-function onProctorVis(){ if(proctor.active && document.hidden){ proctor.tab++; toast('⚠ You left the test tab — this is recorded'); updateProctorBadge(); } }
-function onProctorPaste(){ if(proctor.active){ proctor.paste++; toast('⚠ Pasting is recorded during a test'); updateProctorBadge(); } }
+let proctor={tab:0,paste:0,fs:0,copy:0,cam:0,active:false};
+function proctorCount(){ return proctor.tab+proctor.paste+proctor.fs+proctor.copy+proctor.cam; }
+function onProctorVis(){ if(!proctor.active) return;
+  if(document.hidden){ proctor.tab++; updateProctorBadge(); if(examKind!=='test') toast('⚠ You left the test tab — this is recorded'); }
+  else if(examMode && examKind==='test'){ showExamBlock('hidden'); } }
+function onProctorPaste(){ if(proctor.active){ proctor.paste++; updateProctorBadge(); if(examKind!=='test') toast('⚠ Pasting is recorded during a test'); } }
 function updateProctorBadge(){ const b=document.getElementById('proctor-badge'); if(!b) return;
-  const n=proctor.tab+proctor.paste; b.textContent = n? ('⚠ Proctoring: '+n+' warning'+(n===1?'':'s')) : 'Proctoring: on';
+  const n=proctorCount(); b.textContent = n? ('⚠ Proctoring: '+n+' flag'+(n===1?'':'s')) : 'Proctoring: on';
   b.style.color = n? '#b23b3b' : 'var(--muted)'; b.style.borderColor = n? '#f0bcbc' : 'var(--line)'; }
-function startProctor(){ proctor={tab:0,paste:0,active:true};
+function startProctor(){ proctor={tab:0,paste:0,fs:0,copy:0,cam:0,active:true};
   document.addEventListener('visibilitychange', onProctorVis);
   document.addEventListener('paste', onProctorPaste, true); }
 function stopProctor(){ proctor.active=false;
@@ -1237,6 +1260,7 @@ async function renderContests(){
 }
 async function openContest(id){
   stopTimer();
+  window.__examKind='contest';              // lighter exam mode (no camera / clipboard lock)
   window.__examBack=()=>openContest(id);
   const c=await apiGet('/api/contests/'+id); lastStandings=(c.standings||[]);
   const probs=(c.problems||[]).map((p,i)=>`<div class="card prow" onclick="openExamProblem('${p.id}')">
@@ -1302,35 +1326,44 @@ async function renderReports(){ stopTimer();
 }
 
 
-// ---------- EXAM MODE (fullscreen lockdown for tests & contests) ----------
-// Return to wherever the student launched the test from — WITHIN the SPA.
-// (Previously Cancel called history.back(), which left the app entirely and
-// could land on an unrelated site in the browser's history.)
+// ---------- EXAM MODE (fullscreen lockdown; hardened for Tests) ----------
+// window.__examKind is set to 'test' (hardened + camera) or 'contest' (light) by
+// whoever launched the exam, before openExamProblem runs.
 function examCancel(){ if(typeof window.__examBack==='function'){ try{ window.__examBack(); return; }catch(e){} } renderDashboard(); }
 async function openExamProblem(id){
   stopTimer();
   let r=await fetch('/api/problems/'+id); if(!r.ok) r=await fetch('/api/challenge/'+id);
   if(!r.ok){ toast('Problem not found'); return; }
   const d=await r.json(); window.__examDetail=d;
+  const isTest = (window.__examKind||'')==='test';
   app.innerHTML=`<div class="examgate"><div class="examgate-card">
     <div class="auth-logo"></div>
     <h1 style="margin:12px 0 2px">Proctored Test</h1>
     <p class="muted" style="margin:0">${esc(d.meta.title)}</p>
     <ul class="examrules">
-      <li>The test opens in <b>full screen</b>.</li>
-      <li><b>Do not switch tabs</b> or exit full screen — each time is recorded.</li>
-      <li>Leaving or closing the page is logged and reported to your admin.</li>
+      <li>The test runs in <b>full screen</b>. Leaving full screen or this tab pauses the test and is recorded.</li>
+      ${isTest?'<li>Your <b>webcam</b> is monitored — periodic snapshots go to your admin. Keep your face visible and the camera uncovered.</li>':''}
+      ${isTest?'<li><b>Copy, paste, right-click and the back button are disabled</b> during the test.</li>':'<li>Do not switch tabs or exit full screen — each time is recorded.</li>'}
       <li>Submitting ends the test.</li>
     </ul>
-    <button class="btn btn-primary" onclick="beginExam()">Start Test in Full Screen</button>
+    <div id="gate-err" class="err"></div>
+    <button class="btn btn-primary" onclick="beginExam()">${isTest?'Allow camera &amp; start':'Start Test in Full Screen'}</button>
     <button class="btn btn-ghost" style="margin-left:8px" onclick="examCancel()">Cancel</button>
   </div></div>`;
 }
-function beginExam(){
+async function beginExam(){
   const el=document.documentElement;
   const req=el.requestFullscreen||el.webkitRequestFullscreen||el.msRequestFullscreen;
-  if(req){ try{ req.call(el); }catch(e){} }
-  examMode=true;
+  if(req){ try{ req.call(el); }catch(e){} }            // synchronous — uses the click gesture
+  if((window.__examKind||'')==='test'){
+    // Camera is required. Acquire it now (this click is the permission gesture).
+    try{ (cam=cam||{}).stream = await navigator.mediaDevices.getUserMedia({ video:{width:320,height:240}, audio:false }); }
+    catch(e){ const err=document.getElementById('gate-err');
+      if(err) err.textContent='Camera access is required for this test — please allow it and click Start again.';
+      try{ if(document.fullscreenElement && document.exitFullscreen) document.exitFullscreen(); }catch(_){}
+      return; }
+  }
+  examMode=true; examKind=window.__examKind||'test';
   renderTest(window.__examDetail);
 }
 function startExam(){
@@ -1338,18 +1371,110 @@ function startExam(){
   document.addEventListener('fullscreenchange', onFsChange);
   window.addEventListener('beforeunload', onExamUnload);
   document.addEventListener('contextmenu', preventCtx);
+  if(examKind==='test'){
+    document.addEventListener('copy', blockClipboard, true);
+    document.addEventListener('cut', blockClipboard, true);
+    document.addEventListener('paste', blockPaste, true);
+    document.addEventListener('dragstart', preventSelect, true);
+    document.addEventListener('keydown', blockKeys, true);
+    try{ history.pushState({tb:'exam'}, ''); }catch(e){}
+    window.addEventListener('popstate', onExamPop);
+    startCam(false);
+  }
 }
 function stopExam(){
-  if(!examSession && !examMode){ return; }
+  if(!examSession){ examKind=null; return; }   // guard on the SESSION so examMode survives the render transition
   examSession=false; examMode=false;
   document.removeEventListener('fullscreenchange', onFsChange);
   window.removeEventListener('beforeunload', onExamUnload);
   document.removeEventListener('contextmenu', preventCtx);
+  document.removeEventListener('copy', blockClipboard, true);
+  document.removeEventListener('cut', blockClipboard, true);
+  document.removeEventListener('paste', blockPaste, true);
+  document.removeEventListener('dragstart', preventSelect, true);
+  document.removeEventListener('keydown', blockKeys, true);
+  window.removeEventListener('popstate', onExamPop);
+  stopCam();
+  const o=document.getElementById('exam-block'); if(o) o.remove();
   try{ if(document.fullscreenElement && document.exitFullscreen) document.exitFullscreen(); }catch(e){}
+  examKind=null;
 }
-function onFsChange(){ if(examSession && !document.fullscreenElement){ proctor.tab++; updateProctorBadge(); toast('⚠ You left full screen — recorded'); } }
+function onFsChange(){ if(examSession && !document.fullscreenElement){ proctor.fs++; updateProctorBadge();
+  if(examKind==='test') showExamBlock('fullscreen'); else toast('⚠ You left full screen — recorded'); } }
 function onExamUnload(e){ if(examSession){ e.preventDefault(); e.returnValue=''; return ''; } }
 function preventCtx(e){ if(examSession) e.preventDefault(); }
+function blockClipboard(e){ if(examSession && examKind==='test'){ e.preventDefault(); proctor.copy++; updateProctorBadge(); toast('⚠ Copying is disabled during the test'); } }
+function blockPaste(e){ if(examSession && examKind==='test'){ e.preventDefault(); toast('⚠ Pasting is disabled during the test'); } }
+function preventSelect(e){ if(examSession && examKind==='test') e.preventDefault(); }
+function blockKeys(e){ if(!examSession || examKind!=='test') return;
+  const k=(e.key||'').toLowerCase(), ctrl=e.ctrlKey||e.metaKey;
+  if(k==='f12'){ e.preventDefault(); return; }
+  if(ctrl && e.shiftKey && (k==='i'||k==='j'||k==='c')){ e.preventDefault(); return; }   // devtools
+  if(ctrl && (k==='p'||k==='s'||k==='u')){ e.preventDefault(); return; }                 // print / save / view-source
+}
+function onExamPop(){ if(examSession && examKind==='test'){ try{ history.pushState({tb:'exam'}, ''); }catch(e){}
+  proctor.tab++; updateProctorBadge(); toast('⚠ The back button is disabled during the test — recorded'); } }
+
+// A full-screen overlay that blocks the test and forces the student to return.
+function showExamBlock(reason){
+  if(examKind!=='test') return;
+  let o=document.getElementById('exam-block');
+  if(!o){ o=document.createElement('div'); o.id='exam-block'; document.body.appendChild(o); }
+  const msg = reason==='camera' ? 'Your camera is off or covered. Please face the camera to continue.'
+    : reason==='hidden' ? 'You left the test window — this has been recorded.'
+    : 'You left full screen — this has been recorded.';
+  o.style.cssText='position:fixed;inset:0;z-index:99999;background:rgba(14,14,20,.97);color:#fff;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px';
+  o.innerHTML=`<div style="max-width:440px"><div style="font-size:42px">🔒</div>
+    <h2 style="margin:8px 0">Test paused</h2>
+    <p style="opacity:.85;line-height:1.5">${msg}</p>
+    <button id="exam-resume-btn" style="margin-top:14px;padding:12px 24px;font-size:15px;border:0;border-radius:10px;background:#e8a33d;color:#1a1205;font-weight:700;cursor:pointer">Return to test</button></div>`;
+  o.style.display='flex';
+  const btn=document.getElementById('exam-resume-btn'); if(btn) btn.onclick=examResume;
+}
+function hideExamBlock(){ const o=document.getElementById('exam-block'); if(o) o.style.display='none'; }
+async function examResume(){
+  if(!document.fullscreenElement){ const el=document.documentElement; const req=el.requestFullscreen||el.webkitRequestFullscreen||el.msRequestFullscreen; if(req){ try{ await req.call(el); }catch(e){} } }
+  if(cam && cam.trackDead){ await startCam(true); }
+  if(document.fullscreenElement && !document.hidden && !(cam && cam.lost)) hideExamBlock();
+}
+
+// Webcam proctoring: periodic snapshots + covered/lost detection.
+async function startCam(reacquire){
+  cam = cam || {};
+  if(reacquire || !cam.stream){
+    try{ cam.stream = await navigator.mediaDevices.getUserMedia({ video:{width:320,height:240}, audio:false }); cam.trackDead=false; }
+    catch(e){ cam.lost=true; cam.trackDead=true; if(examMode&&examKind==='test'){ proctor.cam++; updateProctorBadge(); showExamBlock('camera'); } return false; }
+  }
+  cam.lost=false;
+  if(!cam.video){ cam.video=document.createElement('video'); cam.video.autoplay=true; cam.video.muted=true; cam.video.playsInline=true;
+    cam.video.style.cssText='position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;left:-10px;bottom:-10px'; document.body.appendChild(cam.video); }
+  cam.video.srcObject=cam.stream; try{ await cam.video.play(); }catch(e){}
+  if(!cam.canvas){ cam.canvas=document.createElement('canvas'); cam.canvas.width=320; cam.canvas.height=240; }
+  const track=cam.stream.getVideoTracks()[0];
+  if(track){ track.onended=()=>{ cam.lost=true; cam.trackDead=true; if(examMode&&examKind==='test'){ proctor.cam++; updateProctorBadge(); showExamBlock('camera'); } }; }
+  if(!cam.timer){ cam.timer=setInterval(()=>camSnap('interval'), 30000); setTimeout(()=>camSnap('start'), 1500); }
+  return true;
+}
+function camSnap(kind){
+  try{
+    if(!cam || !cam.video || !cam.canvas || cam.trackDead) return;
+    const ctx=cam.canvas.getContext('2d'); ctx.drawImage(cam.video,0,0,cam.canvas.width,cam.canvas.height);
+    let avg=255; try{ const data=ctx.getImageData(0,0,cam.canvas.width,cam.canvas.height).data; let s=0,n=0;
+      for(let i=0;i<data.length;i+=40){ s+=data[i]+data[i+1]+data[i+2]; n++; } avg=s/(n*3); }catch(e){}
+    if(avg<12){ cam.dark=(cam.dark||0)+1;
+      if(cam.dark>=2 && !cam.lost){ cam.lost=true; proctor.cam++; updateProctorBadge(); if(examMode&&examKind==='test') showExamBlock('camera'); }
+    } else { cam.dark=0; if(cam.lost && !cam.trackDead) cam.lost=false; }
+    if(avg>=12){ const img=cam.canvas.toDataURL('image/jpeg',0.5);
+      apiPost('/api/proctor/snapshot',{ problemId:(curProblem&&curProblem.meta&&curProblem.meta.id)||'', image:img, kind }).catch(()=>{}); }
+  }catch(e){}
+}
+function stopCam(){
+  if(!cam) return;
+  if(cam.timer){ clearInterval(cam.timer); cam.timer=null; }
+  try{ if(cam.stream) cam.stream.getTracks().forEach(t=>t.stop()); }catch(e){}
+  try{ if(cam.video){ cam.video.srcObject=null; cam.video.remove(); } }catch(e){}
+  cam=null;
+}
 
 // ---------- IMAGE UPLOAD ----------
 function uploadImage(targetId){

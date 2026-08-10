@@ -22,6 +22,7 @@ const jobQueue = require('./queue');
 const harnessGen = require('./harness-gen');
 const mailer = require('./mailer');
 const xlsx = require('./xlsx');
+const proctor = require('./proctor');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -109,6 +110,35 @@ async function handleApi(req, res, url) {
     const u = currentUser(req);
     return sendJSON(res, 200, { user: u ? auth.publicUser(u) : null, isFirstUser: auth.allUsers().length === 0 });
   }
+  // ---- PROCTORING: a student uploads a webcam snapshot during a Test ----
+  if (req.method === 'POST' && url === '/api/proctor/snapshot') {
+    const me = currentUser(req); if (!me) return sendJSON(res, 401, { error: 'login required' });
+    const b = await readBody(req);
+    try { const r = proctor.save({ userId: me.id, problemId: b.problemId, kind: b.kind, dataUrl: b.image });
+      return sendJSON(res, 200, { ok: true, id: r.id }); }
+    catch (e) { return sendJSON(res, 400, { error: e.message || 'bad snapshot' }); }
+  }
+  // ---- PROCTORING: staff view a student's snapshots (sub-admin scoped to their batches) ----
+  const psm = url.match(/^\/api\/proctor\/shots\/([^/]+)$/);
+  if (req.method === 'GET' && psm) {
+    const me = currentUser(req); if (!isStaff(me)) return sendJSON(res, 403, { error: 'staff only' });
+    const target = auth.findById(psm[1]); if (!target) return sendJSON(res, 404, { error: 'not found' });
+    if (me.role === 'subadmin' && !(me.assignedBatches || []).includes(target.batchId))
+      return sendJSON(res, 403, { error: 'not your student' });
+    return sendJSON(res, 200, { student: target.name, shots: proctor.listForUser(target.id) });
+  }
+  // ---- PROCTORING: stream one snapshot image (staff only, scoped) ----
+  const pim = url.match(/^\/api\/proctor\/image\/(\d+)$/);
+  if (req.method === 'GET' && pim) {
+    const me = currentUser(req); if (!isStaff(me)) { res.writeHead(403); return res.end('forbidden'); }
+    const f = proctor.getFile(parseInt(pim[1], 10)); if (!f) { res.writeHead(404); return res.end('not found'); }
+    if (me.role === 'subadmin') { const stu = auth.findById(f.userId);
+      if (!stu || !(me.assignedBatches || []).includes(stu.batchId)) { res.writeHead(403); return res.end('forbidden'); } }
+    const ext = path.extname(f.file).toLowerCase();
+    res.writeHead(200, { 'Content-Type': ext === '.png' ? 'image/png' : (ext === '.webp' ? 'image/webp' : 'image/jpeg'), 'Cache-Control': 'private, max-age=3600' });
+    return fs.createReadStream(f.full).pipe(res);
+  }
+
   // ---- SELF-SERVICE: change your own password (logged in) ----
   if (req.method === 'POST' && url === '/api/change-password') {
     const me = currentUser(req); if (!me) return sendJSON(res, 401, { error: 'login required' });
@@ -203,7 +233,9 @@ async function handleApi(req, res, url) {
     if (isSubmit) {
       const feedback = buildFeedback2(q, result);
       const flags = body.flags || {};
-      const violations = (Number(flags.tabSwitches) || 0) + (Number(flags.pasteAttempts) || 0);
+      const violations = (Number(flags.tabSwitches) || 0) + (Number(flags.pasteAttempts) || 0)
+        + (Number(flags.fullscreenExits) || 0) + (Number(flags.copyBlocks) || 0)
+        + (Number(flags.blurs) || 0) + (Number(flags.cameraLost) || 0);
       const runtimeMs = (result.results || []).reduce((m, r) => Math.max(m, r.timeMs || 0), 0);
       const peakMemKb = (result.results || []).reduce((m, r) => Math.max(m, r.memoryKb || 0), 0) || null;
       auth.addSubmission({ userId: me.id, problemId: q.id, title: q.title, tags: q.tags,
@@ -438,7 +470,7 @@ async function handleApi(req, res, url) {
       const vals = Object.values(byP);
       const avg = vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 0;
       const flags = subs.reduce((a, x) => a + (x.violations || 0), 0);
-      return { name: u.name, batchId: u.batchId || '', batch: u.batch || '(unassigned)',
+      return { id: u.id, name: u.name, batchId: u.batchId || '', batch: u.batch || '(unassigned)',
         branch: u.branch || '(none)', year: u.yearOfPassing || '(none)',
         avg, solved: vals.filter((v) => v === 100).length, attempts: subs.length, flags };
     });

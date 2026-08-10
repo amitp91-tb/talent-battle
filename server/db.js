@@ -49,6 +49,9 @@ CREATE TABLE IF NOT EXISTS ai_cache (
 CREATE TABLE IF NOT EXISTS password_resets (
   token TEXT PRIMARY KEY, user_id TEXT, expires_at INTEGER, created_at INTEGER
 );
+CREATE TABLE IF NOT EXISTS proctor_shots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, problem_id TEXT, kind TEXT, file TEXT, at INTEGER
+);
 `);
 
 // small JSON helpers for columns that hold arrays/objects
