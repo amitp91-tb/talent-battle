@@ -361,8 +361,24 @@ function onLangChange(){ const k=document.getElementById('lang').value;
   if(known.includes(cur)||cur==='') setCode(starterFor(k));
   setEditorLang(k);
   const ef=document.getElementById('editor-file'); if(ef) ef.textContent=fileFor[k]||'main'; }
-function startTimer(){ let t=30*60; timer=setInterval(()=>{ if(t>0)t--; const m=Math.floor(t/60),s=t%60;
-  const el=document.getElementById('timer'); if(el) el.textContent=(m<10?'0':'')+m+':'+(s<10?'0':'')+s; },1000); }
+function startTimer(){
+  // A Test with a time limit counts down to a fixed server deadline (so it can't
+  // be reset by re-opening, and it spans all questions). Otherwise a plain 30:00.
+  const deadline = (window.__test && window.__test.deadline) ? window.__test.deadline : 0;
+  let t=30*60;
+  timer=setInterval(()=>{
+    let m,s;
+    if(deadline){
+      const remain=Math.max(0, Math.round((deadline-Date.now())/1000));
+      m=Math.floor(remain/60); s=remain%60;
+      if(remain<=0){ clearInterval(timer); timer=null;
+        const el=document.getElementById('timer'); if(el) el.textContent='00:00';
+        if(examMode && examKind==='test' && window.__test && !window.__autoSubmitting){ window.__autoSubmitting=true; toast('⏰ Time is up — submitting your test'); finishTest(true); }
+        return; }
+    } else { if(t>0)t--; m=Math.floor(t/60); s=t%60; }
+    const el=document.getElementById('timer'); if(el) el.textContent=(m<10?'0':'')+m+':'+(s<10?'0':'')+s;
+  },1000);
+}
 
 function verdictRow(r){ const cls=r.verdict==='Accepted'?'ok':'bad'; const name=r.hidden?'Hidden test '+r.index:'Sample test '+r.index;
   const t = r.timeMs!=null?` <span class="muted">· ${r.timeMs} ms</span>`:'';
@@ -1025,6 +1041,7 @@ async function renderTestForm(){
     <div class="card">
       <div class="field"><label>Title</label><input id="t-title" placeholder="Week 1 — Arrays & Strings"></div>
       <div class="field"><label>Description (optional)</label><textarea id="t-desc" style="height:70px"></textarea></div>
+      <div class="field"><label>Time limit (minutes)</label><input id="t-duration" type="number" min="0" value="30" style="max-width:160px"><span class="muted" style="margin-left:8px;font-size:12px">Whole test is one timed sitting. 0 = no limit.</span></div>
       <h2 style="margin-top:14px">Pick questions</h2>
       <div class="checks">${qChecks}</div>
       <h2 style="margin-top:16px">Assign to batches</h2>
@@ -1037,7 +1054,7 @@ async function submitTest(){
   const questionIds = [...document.querySelectorAll('.q-pick:checked')].map(x=>x.value);
   const batchIds = [...document.querySelectorAll('.b-pick:checked')].map(x=>x.value);
   const { status, body } = await apiPost('/api/admin/tests',
-    { title:val('t-title'), description:val('t-desc'), questionIds, batchIds });
+    { title:val('t-title'), description:val('t-desc'), durationMin:val('t-duration'), questionIds, batchIds });
   if(status!==200){ document.getElementById('terr').textContent = body.error||'Could not create test'; return; }
   renderAdminTests();
 }
@@ -1068,25 +1085,31 @@ async function openTest(id){
   window.__examKind='test';
   const answered=(body.answered||[]), qs=(body.questions||[]);
   let idx=qs.findIndex(q=>!answered.includes(q.id)); if(idx<0) idx=0;
-  window.__test={ id, title:body.title, questions:qs, answered:answered.slice(), idx };
+  window.__test={ id, title:body.title, questions:qs, answered:answered.slice(), idx, deadline:body.deadline||0 };
   window.__examBack=()=>renderStudentTests();
-  renderExamGate(body.title);
+  renderExamGate(body.title, { resuming: answered.length>0, deadline: body.deadline||0, durationMin: body.durationMin||0 });
 }
-function renderExamGate(title){
+function renderExamGate(title, opts){
+  opts = opts || {};
   const isTest = (window.__examKind||'')==='test';
+  const remainMin = opts.deadline ? Math.max(0, Math.ceil((opts.deadline - Date.now())/60000)) : 0;
+  const timeLine = isTest ? (opts.deadline
+      ? `<p style="margin:6px 0 0;font-weight:700">${opts.resuming?'This test is already running':'Time limit'}: ${remainMin} minute(s) ${opts.resuming?'left':''}</p>`
+      : '<p class="muted" style="margin:6px 0 0">No time limit.</p>') : '';
   app.innerHTML=`<div class="examgate"><div class="examgate-card">
     <div class="auth-logo"></div>
     <h1 style="margin:12px 0 2px">Proctored Test</h1>
     <p class="muted" style="margin:0">${esc(title||'')}</p>
+    ${timeLine}
     <ul class="examrules">
-      <li>The test runs in <b>full screen</b>. Leaving full screen or this tab pauses the test and is recorded.</li>
+      <li>The test runs in <b>full screen</b>. Leaving full screen or switching tab is a <b>violation</b> and is recorded.</li>
       ${isTest?'<li>Your <b>webcam</b> is monitored — keep your face visible and the camera uncovered.</li>':''}
       ${isTest?'<li><b>Copy, paste, right-click and the back button are disabled.</b> Questions appear one at a time — you cannot go back.</li>':'<li>Do not switch tabs or exit full screen — each time is recorded.</li>'}
-      ${isTest?'<li>After <b>4 warnings the test is auto-submitted</b>, and it cannot be restarted.</li>':''}
+      ${isTest?'<li>After <b>4 violations the test ends automatically</b>, keeping whatever you have submitted. It cannot be restarted.</li>':''}
       <li>Submitting ends the test.</li>
     </ul>
     <div id="gate-err" class="err"></div>
-    <button class="btn btn-primary" onclick="beginExam()">${isTest?'Allow camera &amp; start':'Start in Full Screen'}</button>
+    <button class="btn btn-primary" onclick="beginExam()">${isTest?(opts.resuming?'Resume test':'Allow camera &amp; start'):'Start in Full Screen'}</button>
     <button class="btn btn-ghost" style="margin-left:8px" onclick="examCancel()">Cancel</button>
   </div></div>`;
 }
@@ -1292,17 +1315,23 @@ async function runCustom(){
 
 // ---------- ANTI-CHEATING / PROCTORING ----------
 let proctor={tab:0,paste:0,fs:0,copy:0,cam:0,active:false};
-function proctorCount(){ return proctor.tab+proctor.paste+proctor.fs+proctor.copy+proctor.cam; }
+// Violations that count toward the 4-strike auto-end: exit full screen, switch
+// tab / open a new tab / switch app, and camera loss. Blocked copy/paste is
+// recorded for the admin but does NOT count toward auto-end.
+function proctorWarnings(){ return proctor.tab+proctor.fs+proctor.cam; }
+function bumpLeave(){ const now=Date.now(); if(now-(proctor._lastLeave||0)<800) return; proctor._lastLeave=now; proctor.tab++; updateProctorBadge(); }
+function bumpCopy(){ const now=Date.now(); if(now-(proctor._lastCopy||0)<250) return; proctor._lastCopy=now; proctor.copy++; }
 function onProctorVis(){ if(!proctor.active) return;
-  if(document.hidden){ proctor.tab++; updateProctorBadge(); if(examKind!=='test') toast('⚠ You left the test tab — this is recorded'); }
+  if(document.hidden){ bumpLeave(); if(examKind!=='test') toast('⚠ You left the test tab — this is recorded'); }
   else if(examMode && examKind==='test'){ showExamBlock('hidden'); } }
-function onProctorPaste(){ if(proctor.active){ proctor.paste++; updateProctorBadge(); if(examKind!=='test') toast('⚠ Pasting is recorded during a test'); } }
+function onExamBlur(){ if(examSession && examKind==='test'){ bumpLeave(); showExamBlock('hidden'); } }
+function onProctorPaste(){ if(proctor.active){ proctor.paste++; if(examKind!=='test') toast('⚠ Pasting is recorded during a test'); } }
 function updateProctorBadge(){
-  const n=proctorCount();
-  // Auto-submit a Test after 4 warnings (independent of whether the badge is visible).
+  const n=proctorWarnings();
+  // End the Test after 4 violations, keeping whatever has been submitted so far.
   if(examMode && examKind==='test' && window.__test && !window.__autoSubmitting && n>=4){ window.__autoSubmitting=true; finishTest(true); return; }
   const b=document.getElementById('proctor-badge'); if(!b) return;
-  b.textContent = n? ('⚠ Warnings: '+n+' of 4') : 'Proctoring: on';
+  b.textContent = n? ('⚠ Violations: '+n+' of 4') : 'Proctoring: on';
   b.style.color = n? '#b23b3b' : 'var(--muted)'; b.style.borderColor = n? '#f0bcbc' : 'var(--line)'; }
 function startProctor(){ proctor={tab:0,paste:0,fs:0,copy:0,cam:0,active:true};
   document.addEventListener('visibilitychange', onProctorVis);
@@ -1481,6 +1510,7 @@ function startExam(){
     document.addEventListener('paste', blockPaste, true);
     document.addEventListener('dragstart', preventSelect, true);
     document.addEventListener('keydown', blockKeys, true);
+    window.addEventListener('blur', onExamBlur);
     startCam(false);
   }
 }
@@ -1496,6 +1526,7 @@ function stopExam(){
   document.removeEventListener('paste', blockPaste, true);
   document.removeEventListener('dragstart', preventSelect, true);
   document.removeEventListener('keydown', blockKeys, true);
+  window.removeEventListener('blur', onExamBlur);
   stopCam();
   const o=document.getElementById('exam-block'); if(o) o.remove();
   try{ if(document.fullscreenElement && document.exitFullscreen) document.exitFullscreen(); }catch(e){}
@@ -1505,13 +1536,15 @@ function onFsChange(){ if(examSession && !document.fullscreenElement){ proctor.f
   if(examKind==='test') showExamBlock('fullscreen'); else toast('⚠ You left full screen — recorded'); } }
 function onExamUnload(e){ if(examSession){ e.preventDefault(); e.returnValue=''; return ''; } }
 function preventCtx(e){ if(examSession) e.preventDefault(); }
-function blockClipboard(e){ if(examSession && examKind==='test'){ e.preventDefault(); proctor.copy++; updateProctorBadge(); toast('⚠ Copying is disabled during the test'); } }
+function blockClipboard(e){ if(examSession && examKind==='test'){ e.preventDefault(); bumpCopy(); toast('⚠ Copying is disabled during the test'); } }
 function blockPaste(e){ if(examSession && examKind==='test'){ e.preventDefault(); toast('⚠ Pasting is disabled during the test'); } }
 function preventSelect(e){ if(examSession && examKind==='test') e.preventDefault(); }
 function blockKeys(e){ if(!examSession || examKind!=='test') return;
   const k=(e.key||'').toLowerCase(), ctrl=e.ctrlKey||e.metaKey;
   if(k==='f12'){ e.preventDefault(); return; }
   if(ctrl && e.shiftKey && (k==='i'||k==='j'||k==='c')){ e.preventDefault(); return; }   // devtools
+  // Block copy/cut/paste keys too — the editor (Monaco) can bypass the clipboard events.
+  if(ctrl && (k==='c'||k==='x'||k==='v')){ e.preventDefault(); e.stopPropagation(); bumpCopy(); toast('⚠ Copy/paste is disabled during the test'); return; }
   if(ctrl && (k==='p'||k==='s'||k==='u')){ e.preventDefault(); return; }                 // print / save / view-source
 }
 

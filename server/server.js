@@ -266,10 +266,15 @@ async function handleApi(req, res, url) {
       auth.addSubmission({ userId: me.id, problemId: q.id, title: q.title, tags: q.tags,
         language: body.language, score: result.score, overall: result.overall, at: Date.now(),
         source: body.code || '', violations, runtimeMs, memoryKb: peakMemKb });
-      // If this submission is part of a Test sitting, record the question's best score.
-      if (body.testId) { const t = tests.getById(body.testId);
-        if (t && (t.batchIds.length === 0 || t.batchIds.includes(me.batchId)) && t.questionIds.includes(q.id))
-          attempts.recordAnswer(me.id, body.testId, q.id, result.score); }
+      // If this submission is part of a Test sitting, record the question's best score
+      // (unless the sitting's time is already up — then close it out instead).
+      if (body.testId) { const t = tests.getById(String(body.testId));
+        if (t && (t.batchIds.length === 0 || t.batchIds.includes(me.batchId)) && t.questionIds.includes(q.id)) {
+          const at = attempts.get(me.id, t.id);
+          const expired = at && t.durationMin > 0 && Date.now() >= at.startedAt + t.durationMin * 60000;
+          if (expired) attempts.finish(me.id, t.id);
+          else attempts.recordAnswer(me.id, body.testId, q.id, result.score);
+        } }
       return sendJSON(res, 200, { ...result, feedback });
     }
     return sendJSON(res, 200, result);
@@ -407,7 +412,15 @@ async function handleApi(req, res, url) {
       return sendJSON(res, 200, { status: 'done', score: existing.score, answers: existing.answers,
         title: t.title, questions, submittedAt: existing.submittedAt });
     const a = attempts.start(me.id, t.id, questions.length);
-    return sendJSON(res, 200, { status: 'in_progress', title: t.title, questions, answered: Object.keys(a.answers) });
+    const durationMin = t.durationMin || 0;
+    const deadline = durationMin > 0 ? (a.startedAt + durationMin * 60000) : 0;
+    // Time is up on re-open: finish and show the score (no fresh timer on restart).
+    if (deadline && Date.now() >= deadline) {
+      const done = attempts.finish(me.id, t.id);
+      return sendJSON(res, 200, { status: 'done', score: done ? done.score : 0, answers: done ? done.answers : {}, title: t.title, questions });
+    }
+    return sendJSON(res, 200, { status: 'in_progress', title: t.title, questions,
+      answered: Object.keys(a.answers), deadline, durationMin, now: Date.now() });
   }
   // ---- TEST SITTING: finish (student submits the whole test, or auto-submit) ----
   if (req.method === 'POST' && url === '/api/test/finish') {
