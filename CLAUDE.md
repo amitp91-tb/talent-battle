@@ -10,6 +10,7 @@ Built with a deliberately lean, ZERO-npm-dependency stack so it runs anywhere wi
 - To execute student code you need: python3, gcc, g++, a JDK (javac), node. Code execution works best on Linux/the server.
 - The FIRST account registered becomes the Super Admin. Everyone else is a student.
 - Env: PORT (default 3000), TB_DATA (default server/data) for the DB + uploads dir.
+- Email (forgot-password): set TB_SMTP_HOST, TB_SMTP_PORT (587), TB_SMTP_SECURE (ssl|starttls|none), TB_SMTP_USER, TB_SMTP_PASS, TB_SMTP_FROM, and TB_PUBLIC_URL (e.g. https://code.talentbattle.in) for reset links. Without SMTP, forgot-password still works but the reset link is only printed to the server log. Zero-dep SMTP client in server/mailer.js.
 
 ## Architecture / tech
 - Backend: server/server.js — a single Node HTTP server (no framework, no npm deps). Handmade router; JSON APIs under /api/...; serves the SPA from server/public/; serves uploads from /uploads/.

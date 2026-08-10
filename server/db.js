@@ -46,6 +46,9 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS ai_cache (
   k TEXT PRIMARY KEY, kind TEXT, json TEXT, created_at INTEGER
 );
+CREATE TABLE IF NOT EXISTS password_resets (
+  token TEXT PRIMARY KEY, user_id TEXT, expires_at INTEGER, created_at INTEGER
+);
 `);
 
 // small JSON helpers for columns that hold arrays/objects
@@ -59,6 +62,7 @@ addColumn('submissions','memory_kb','INTEGER');
 addColumn('questions','time_complexity','TEXT'); addColumn('questions','space_complexity','TEXT'); addColumn('questions','solutions','TEXT');
 addColumn('questions','mode','TEXT'); addColumn('questions','harness','TEXT');
 addColumn('challenge','time_complexity','TEXT'); addColumn('challenge','space_complexity','TEXT'); addColumn('challenge','solutions','TEXT');
+addColumn('users','must_change_password','INTEGER');
 
 const J = (v) => JSON.stringify(v == null ? [] : v);
 const P = (s) => { try { return JSON.parse(s || '[]'); } catch { return []; } };

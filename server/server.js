@@ -20,6 +20,7 @@ const crypto = require('crypto');
 const { db } = require('./db');
 const jobQueue = require('./queue');
 const harnessGen = require('./harness-gen');
+const mailer = require('./mailer');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -106,6 +107,48 @@ async function handleApi(req, res, url) {
   if (req.method === 'GET' && url === '/api/me') {
     const u = currentUser(req);
     return sendJSON(res, 200, { user: u ? auth.publicUser(u) : null, isFirstUser: auth.allUsers().length === 0 });
+  }
+  // ---- SELF-SERVICE: change your own password (logged in) ----
+  if (req.method === 'POST' && url === '/api/change-password') {
+    const me = currentUser(req); if (!me) return sendJSON(res, 401, { error: 'login required' });
+    const b = await readBody(req);
+    // A forced first-login change carries no old password; otherwise verify the current one.
+    if (!me.mustChange && !auth.verifyPassword(b.currentPassword || '', me.pass))
+      return sendJSON(res, 400, { error: 'Your current password is incorrect.' });
+    if (String(b.newPassword || '').length < 6) return sendJSON(res, 400, { error: 'New password must be at least 6 characters.' });
+    if (auth.verifyPassword(b.newPassword, me.pass)) return sendJSON(res, 400, { error: 'Please pick a password different from your current/temporary one.' });
+    try { auth.setPassword(me.id, b.newPassword); return sendJSON(res, 200, { ok: true }); }
+    catch (e) { return sendJSON(res, 400, { error: e.message }); }
+  }
+  // ---- FORGOT PASSWORD: email a one-time reset link. Never reveals whether an email exists. ----
+  if (req.method === 'POST' && url === '/api/forgot-password') {
+    const b = await readBody(req);
+    const email = String(b.email || '').toLowerCase().trim();
+    const u = email ? auth.findByEmail(email) : null;
+    if (u) {
+      const token = auth.createReset(u.id);
+      const base = mailer.publicBase() || `http://${req.headers.host || 'localhost:3000'}`;
+      const link = `${base}/#reset=${token}`;
+      if (mailer.configured()) {
+        mailer.sendMail({ to: u.email, subject: 'Reset your Talent Battle password',
+          text: `Hi ${u.name},\n\nReset your password using this link (valid for 1 hour):\n${link}\n\nIf you didn't request this, ignore this email.`,
+          html: `<p>Hi ${u.name},</p><p>Reset your Talent Battle password using this link (valid for 1 hour):</p>`
+            + `<p><a href="${link}">${link}</a></p><p style="color:#888">If you didn't request this, you can safely ignore this email.</p>` })
+          .catch((e) => console.error('[forgot-password] email send failed for', u.email, '-', e.message));
+      } else {
+        console.log(`[forgot-password] SMTP not configured — reset link for ${u.email}: ${link}`);
+      }
+    }
+    return sendJSON(res, 200, { ok: true });
+  }
+  // ---- RESET PASSWORD via the emailed token ----
+  if (req.method === 'POST' && url === '/api/reset-password') {
+    const b = await readBody(req);
+    const uid = auth.consumeReset(b.token || '');
+    if (!uid) return sendJSON(res, 400, { error: 'This reset link is invalid or has expired. Please request a new one.' });
+    if (String(b.newPassword || '').length < 6) return sendJSON(res, 400, { error: 'New password must be at least 6 characters.' });
+    try { auth.setPassword(uid, b.newPassword); return sendJSON(res, 200, { ok: true }); }
+    catch (e) { return sendJSON(res, 400, { error: e.message }); }
   }
 
   // ---- PUBLIC READ ----
@@ -487,7 +530,7 @@ async function handleApi(req, res, url) {
         const batch = b.batchId ? groups.getById(b.batchId) : null;
         const u = auth.createUser({ name: b.name, email: b.email, password: b.password, role: 'student',
           batch: batch ? batch.name : '', batchId: batch ? batch.id : '',
-          mobile: b.mobile, branch: b.branch, yearOfPassing: b.yearOfPassing });
+          mobile: b.mobile, branch: b.branch, yearOfPassing: b.yearOfPassing, mustChange: true });
         return sendJSON(res, 200, { user: auth.publicUser(u) });
       } catch (e) { return sendJSON(res, 400, { error: e.message }); }
     }
@@ -539,7 +582,7 @@ async function handleApi(req, res, url) {
     const pwm = url.match(/^\/api\/admin\/users\/([^/]+)\/password$/);
     if (req.method === 'POST' && pwm) {
       const b = await readBody(req);
-      try { const ok = auth.setPassword(pwm[1], b.password);
+      try { const ok = auth.setPassword(pwm[1], b.password, { mustChange: true });
         return ok ? sendJSON(res, 200, { ok: true }) : sendJSON(res, 404, { error: 'user not found' }); }
       catch (e) { return sendJSON(res, 400, { error: e.message }); }
     }
@@ -574,7 +617,7 @@ async function handleApi(req, res, url) {
         try {
           auth.createUser({ name, email, password, role: 'student', batch: batch ? batch.name : '', batchId: batch ? batch.id : '',
             college: col(parts, 'college'), mobile: col(parts, 'mobile'), branch: col(parts, 'branch'),
-            yearOfPassing: col(parts, 'year') || col(parts, 'yearofpassing') || col(parts, 'year of passing') });
+            yearOfPassing: col(parts, 'year') || col(parts, 'yearofpassing') || col(parts, 'year of passing'), mustChange: true });
           created.push(email);
         } catch (e) { skipped.push({ row: i + 1, email, reason: e.message }); }
       }

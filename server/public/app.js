@@ -94,7 +94,7 @@ function renderAuth(mode){
         <div class="field"><label>Email</label><input id="email" type="email" placeholder="you@college.edu"></div>
         <div class="field"><label>Password</label><input id="password" type="password"></div>
         <button class="btn btn-primary" style="width:100%" onclick="doLogin()">Log in</button>
-        <p class="muted" style="margin-top:10px;font-size:12px;text-align:center">Forgot your password? Ask your administrator to reset it.</p>
+        <p style="margin-top:10px;font-size:12px;text-align:center"><a href="#" onclick="renderForgot();return false">Forgot your password?</a></p>
       ` : `
         <p class="muted" style="margin-top:0">The first account created becomes the administrator. After that, sign-ups are students.</p>
         <div class="field"><label>Full name</label><input id="name" placeholder="Rahul Sharma"></div>
@@ -121,6 +121,94 @@ async function doRegister(){
   ME = body.user; await boot();
 }
 async function doLogout(){ await apiPost('/api/logout', {}); ME=null; stopTimer(); renderAuth('login'); }
+function renderDashOrHome(){ if(ME.role==='admin') renderAdminHome(); else if(ME.role==='subadmin') renderFaculty(); else renderDashboard(); }
+
+// ---- Password: forced change on first login (temporary/admin-issued password) ----
+function renderForceChange(){
+  userbar.innerHTML='';
+  app.innerHTML=`<div class="authwrap card">
+    <div class="auth-logo"></div>
+    <h1 style="text-align:center;margin-top:6px">Set your password</h1>
+    <p class="muted" style="text-align:center;margin-top:0">You're signed in with a temporary password. Choose a new one to continue.</p>
+    <div id="autherr" class="err"></div>
+    <div class="field"><label>New password</label><input id="np1" type="password" placeholder="at least 6 characters"></div>
+    <div class="field"><label>Confirm new password</label><input id="np2" type="password"></div>
+    <button class="btn btn-primary" style="width:100%" onclick="doForceChange()">Save &amp; continue</button>
+  </div>`;
+}
+async function doForceChange(){
+  const a=val('np1'), b=val('np2'), err=document.getElementById('autherr');
+  if(a.length<6){ err.textContent='Password must be at least 6 characters.'; return; }
+  if(a!==b){ err.textContent='Passwords do not match.'; return; }
+  const { status, body }=await apiPost('/api/change-password',{ newPassword:a });
+  if(status!==200){ err.textContent=body.error||'Could not set password'; return; }
+  ME.mustChange=false; toast('Password updated ✓'); await boot();
+}
+
+// ---- Password: self-service change (logged in, from the top bar) ----
+function renderChangePassword(){
+  stopTimer();
+  app.innerHTML=`<div class="authwrap card">
+    <h1 style="margin-top:6px">Change password</h1>
+    <div id="autherr" class="err"></div>
+    <div class="field"><label>Current password</label><input id="cp" type="password"></div>
+    <div class="field"><label>New password</label><input id="np1" type="password" placeholder="at least 6 characters"></div>
+    <div class="field"><label>Confirm new password</label><input id="np2" type="password"></div>
+    <div style="margin-top:8px"><button class="btn btn-primary" onclick="doChangePassword()">Update password</button>
+    <button class="btn btn-ghost" style="margin-left:8px" onclick="renderDashOrHome()">Cancel</button></div>
+  </div>`;
+}
+async function doChangePassword(){
+  const cur=val('cp'), a=val('np1'), b=val('np2'), err=document.getElementById('autherr');
+  if(a.length<6){ err.textContent='New password must be at least 6 characters.'; return; }
+  if(a!==b){ err.textContent='Passwords do not match.'; return; }
+  const { status, body }=await apiPost('/api/change-password',{ currentPassword:cur, newPassword:a });
+  if(status!==200){ err.textContent=body.error||'Could not update password'; return; }
+  toast('Password updated ✓'); renderDashOrHome();
+}
+
+// ---- Password: forgot (request a reset email) ----
+function renderForgot(){
+  userbar.innerHTML='';
+  app.innerHTML=`<div class="authwrap card">
+    <div class="auth-logo"></div>
+    <h1 style="text-align:center;margin-top:6px">Forgot password</h1>
+    <p class="muted" style="text-align:center;margin-top:0">Enter your account email. If it's registered, we'll send a reset link.</p>
+    <div id="autherr" class="err"></div>
+    <div id="forgot-ok" style="display:none;color:#0a7d33;font-size:13px;margin-bottom:8px;text-align:center">If that email is registered, a reset link is on its way. Check your inbox (and spam).</div>
+    <div class="field"><label>Email</label><input id="femail" type="email" placeholder="you@college.edu"></div>
+    <button class="btn btn-primary" style="width:100%" onclick="doForgot()">Send reset link</button>
+    <p style="margin-top:10px;font-size:12px;text-align:center"><a href="#" onclick="renderAuth('login');return false">← Back to log in</a></p>
+  </div>`;
+}
+async function doForgot(){
+  const email=val('femail'), err=document.getElementById('autherr');
+  if(!email){ err.textContent='Please enter your email.'; return; }
+  await apiPost('/api/forgot-password',{ email });
+  err.textContent=''; document.getElementById('forgot-ok').style.display='block';
+}
+
+// ---- Password: reset via emailed token (#reset=TOKEN) ----
+function renderReset(token){
+  userbar.innerHTML='';
+  app.innerHTML=`<div class="authwrap card">
+    <div class="auth-logo"></div>
+    <h1 style="text-align:center;margin-top:6px">Choose a new password</h1>
+    <div id="autherr" class="err"></div>
+    <div class="field"><label>New password</label><input id="np1" type="password" placeholder="at least 6 characters"></div>
+    <div class="field"><label>Confirm new password</label><input id="np2" type="password"></div>
+    <button class="btn btn-primary" style="width:100%" onclick="doReset('${token}')">Set new password</button>
+  </div>`;
+}
+async function doReset(token){
+  const a=val('np1'), b=val('np2'), err=document.getElementById('autherr');
+  if(a.length<6){ err.textContent='Password must be at least 6 characters.'; return; }
+  if(a!==b){ err.textContent='Passwords do not match.'; return; }
+  const { status, body }=await apiPost('/api/reset-password',{ token, newPassword:a });
+  if(status!==200){ err.textContent=body.error||'Could not reset password'; return; }
+  try{ history.replaceState(null,'',location.pathname); }catch(e){} location.hash='';
+  toast('Password updated — please log in.'); renderAuth('login');
+}
 
 function renderUserbar(){
   let nav = '';
@@ -144,6 +232,7 @@ function renderUserbar(){
   }
   userbar.innerHTML = `<nav>${nav}</nav>
     <span class="who">${esc(ME.name)} · ${esc(ME.role)}</span>
+    <button class="btn btn-ghost" onclick="renderChangePassword()">Change password</button>
     <button class="btn btn-ghost" onclick="doLogout()">Log out</button>`;
 }
 
@@ -546,6 +635,7 @@ function filterStudents(){ const v=document.getElementById('an-filter').value;
 
 // ---------- BOOT ----------
 async function boot(){
+  if(ME && ME.mustChange){ renderForceChange(); return; }
   renderUserbar();
   LANGS = await apiGet('/api/languages');
   PROBLEMS = await apiGet('/api/problems');
@@ -560,6 +650,8 @@ document.addEventListener('keydown', (e)=>{
   }
 });
 (async function init(){
+  const rm = (location.hash||'').match(/^#reset=([a-f0-9]+)/i);
+  if(rm){ renderReset(rm[1]); return; }
   const me = await apiGet('/api/me');
   if(me.user){ ME = me.user; await boot(); } else { renderAuth('login'); }
 })();
