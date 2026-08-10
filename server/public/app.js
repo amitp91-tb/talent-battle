@@ -1,7 +1,7 @@
 // app.js — single-page app with login accounts (students + faculty).
 const app = document.getElementById('app');
 const userbar = document.getElementById('userbar');
-let ME = null, LANGS = { available:{}, labels:{} }, PROBLEMS = [], timer = null, contestTimer = null, examMode = false, examSession = false, examKind = null, cam = null;
+let ME = null, LANGS = { available:{}, labels:{} }, PROBLEMS = [], timer = null, contestTimer = null, examMode = false, examSession = false, examKind = null, cam = null, advancing = false;
 
 const starters = {
   python: "# Read all input, then print your answer.\nimport sys\ndata = sys.stdin.read().split()\n\n# TODO: compute the answer from `data`\nprint(\"your answer here\")",
@@ -329,8 +329,9 @@ function renderTest(d){
   mountEditor(starterFor(startLang), startLang);
   // Restore any previously written code for this problem so a reload/re-attempt never loses work (#3).
   try{ const saved=localStorage.getItem('tb_code_'+(d.meta&&d.meta.id)); if(saved && saved.trim()) setCode(saved); }catch(e){}
-  startTimer(); startProctor(); updateProctorBadge();
+  startTimer(); if(!advancing) startProctor(); updateProctorBadge();
   if(examMode) startExam();
+  advancing=false;   // the next-question render is complete; future renders may tear down normally
 }
 function renderStatement(md){
   let x = esc(md||'');
@@ -1110,12 +1111,13 @@ async function doExamSubmit(id){
   const t=window.__test; if(t && !t.answered.includes(id)) t.answered.push(id);
   if(res) res.innerHTML=`<div class="row"><span class="dot ${out.overall==='Accepted'?'ok':'bad'}"></span><b>${esc(out.overall)}</b> — ${out.passed}/${out.total} tests</div>`;
   if(!t) return;
-  if(t.idx < t.questions.length-1){ t.idx++; setTimeout(loadExamQuestion, 800); }
+  if(t.idx < t.questions.length-1){ t.idx++; advancing=true; setTimeout(loadExamQuestion, 800); }
   else setTimeout(()=>finishTest(false), 800);
 }
 async function finishTest(auto){
   const t=window.__test; if(!t) return;
   const testId=t.id, title=t.title;
+  advancing=false;                                 // ensure the full exam teardown runs
   stopExam(); window.__test=null; window.__examKind=null;
   let body={};
   try{ const r=await apiPost('/api/test/finish',{ testId }); body=r.body||{}; }catch(e){}
@@ -1305,7 +1307,8 @@ function updateProctorBadge(){
 function startProctor(){ proctor={tab:0,paste:0,fs:0,copy:0,cam:0,active:true};
   document.addEventListener('visibilitychange', onProctorVis);
   document.addEventListener('paste', onProctorPaste, true); }
-function stopProctor(){ proctor.active=false;
+function stopProctor(){ if(advancing) return;    // keep proctoring + warning counts across Test questions
+  proctor.active=false;
   document.removeEventListener('visibilitychange', onProctorVis);
   document.removeEventListener('paste', onProctorPaste, true); }
 
@@ -1467,6 +1470,7 @@ async function beginExam(){
   if(window.__test){ await loadExamQuestion(); } else { renderTest(window.__examDetail); }
 }
 function startExam(){
+  if(examSession) return;                          // already running (e.g. advancing between Test questions)
   examSession=true;
   document.addEventListener('fullscreenchange', onFsChange);
   window.addEventListener('beforeunload', onExamUnload);
@@ -1481,7 +1485,8 @@ function startExam(){
   }
 }
 function stopExam(){
-  if(!examSession){ examKind=null; return; }   // guard on the SESSION so examMode survives the render transition
+  if(advancing) return;                          // moving to the next question within a Test — keep the session alive
+  if(!examSession){ return; }                    // don't null examKind here: it must survive the render transition
   examSession=false; examMode=false;
   document.removeEventListener('fullscreenchange', onFsChange);
   window.removeEventListener('beforeunload', onExamUnload);
@@ -1541,8 +1546,16 @@ async function startCam(reacquire){
     catch(e){ cam.lost=true; cam.trackDead=true; if(examMode&&examKind==='test'){ proctor.cam++; updateProctorBadge(); showExamBlock('camera'); } return false; }
   }
   cam.lost=false;
-  if(!cam.video){ cam.video=document.createElement('video'); cam.video.autoplay=true; cam.video.muted=true; cam.video.playsInline=true;
-    cam.video.style.cssText='position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;left:-10px;bottom:-10px'; document.body.appendChild(cam.video); }
+  if(!cam.video){
+    cam.wrap=document.createElement('div'); cam.wrap.id='cam-preview';
+    cam.wrap.style.cssText='position:fixed;right:14px;bottom:14px;z-index:90;width:160px;border-radius:10px;overflow:hidden;border:2px solid #e8a33d;box-shadow:0 6px 18px rgba(0,0,0,.35);background:#000';
+    cam.video=document.createElement('video'); cam.video.autoplay=true; cam.video.muted=true; cam.video.playsInline=true;
+    cam.video.style.cssText='width:160px;height:120px;object-fit:cover;display:block;transform:scaleX(-1)';   // mirror for a natural self-view
+    const badge=document.createElement('div');
+    badge.innerHTML='<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#ff4d4d;margin-right:5px;vertical-align:middle"></span>Proctoring';
+    badge.style.cssText='position:absolute;top:5px;left:7px;color:#fff;font-size:11px;font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,.85)';
+    cam.wrap.appendChild(cam.video); cam.wrap.appendChild(badge); document.body.appendChild(cam.wrap);
+  }
   cam.video.srcObject=cam.stream; try{ await cam.video.play(); }catch(e){}
   if(!cam.canvas){ cam.canvas=document.createElement('canvas'); cam.canvas.width=320; cam.canvas.height=240; }
   const track=cam.stream.getVideoTracks()[0];
@@ -1567,7 +1580,7 @@ function stopCam(){
   if(!cam) return;
   if(cam.timer){ clearInterval(cam.timer); cam.timer=null; }
   try{ if(cam.stream) cam.stream.getTracks().forEach(t=>t.stop()); }catch(e){}
-  try{ if(cam.video){ cam.video.srcObject=null; cam.video.remove(); } }catch(e){}
+  try{ if(cam.video) cam.video.srcObject=null; if(cam.wrap) cam.wrap.remove(); else if(cam.video) cam.video.remove(); }catch(e){}
   cam=null;
 }
 
