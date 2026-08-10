@@ -62,6 +62,30 @@ function parseCookies(req) {
 }
 const currentUser = (req) => { const c = parseCookies(req); return c.tb_session ? auth.userForToken(c.tb_session) : null; };
 const cookieHeader = (t) => ({ 'Set-Cookie': `tb_session=${t}; HttpOnly; Path=/; SameSite=Lax; Max-Age=604800` });
+
+// Email one student their login details (temporary password + login URL).
+function sendStudentInvite(u) {
+  const eh = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const base = mailer.publicBase() || 'https://code.talentbattle.in';
+  return mailer.sendMail({ to: u.email, subject: 'Your Talent Battle login details',
+    text: `Hi ${u.name},\n\nAn account has been created for you on Talent Battle.\n\n`
+      + `Login page: ${base}\nEmail: ${u.email}\nTemporary password: ${u.password}\n\n`
+      + `You'll be asked to set your own password the first time you log in.\n\n— Talent Battle`,
+    html: `<p>Hi ${eh(u.name)},</p><p>An account has been created for you on <b>Talent Battle</b>.</p>`
+      + `<table cellpadding="4" style="border-collapse:collapse">`
+      + `<tr><td><b>Login page</b></td><td><a href="${base}">${base}</a></td></tr>`
+      + `<tr><td><b>Email</b></td><td>${eh(u.email)}</td></tr>`
+      + `<tr><td><b>Temporary password</b></td><td>${eh(u.password)}</td></tr></table>`
+      + `<p>You'll be asked to set your own password the first time you log in.</p><p>— Talent Battle</p>` });
+}
+// Email a batch of new students their credentials, gently throttled for SES.
+async function sendInvitesInBackground(list) {
+  for (const u of list) {
+    try { await sendStudentInvite(u); }
+    catch (e) { console.error('[invite] email failed for', u.email, '-', e.message); }
+    await new Promise((r) => setTimeout(r, 120));
+  }
+}
 const isAdmin = (u) => u && u.role === 'admin';
 const isStaff = (u) => u && (u.role === 'admin' || u.role === 'subadmin');
 
@@ -602,7 +626,9 @@ async function handleApi(req, res, url) {
         const u = auth.createUser({ name: b.name, email: b.email, password: b.password, role: 'student',
           batch: batch ? batch.name : '', batchId: batch ? batch.id : '',
           mobile: b.mobile, branch: b.branch, yearOfPassing: b.yearOfPassing, mustChange: true });
-        return sendJSON(res, 200, { user: auth.publicUser(u) });
+        if (b.emailInvites !== false && mailer.configured())
+          sendInvitesInBackground([{ name: b.name, email: b.email, password: b.password }]);
+        return sendJSON(res, 200, { user: auth.publicUser(u), emailed: b.emailInvites !== false && mailer.configured() });
       } catch (e) { return sendJSON(res, 400, { error: e.message }); }
     }
     const sm = url.match(/^\/api\/admin\/students\/([^/]+)\/batch$/);
@@ -713,10 +739,13 @@ async function handleApi(req, res, url) {
           auth.createUser({ name, email, password, role: 'student', batch: batch ? batch.name : '', batchId: batch ? batch.id : '',
             college: col(parts, 'college'), mobile: col(parts, 'mobile'), branch: col(parts, 'branch'),
             yearOfPassing: col(parts, 'year') || col(parts, 'yearofpassing') || col(parts, 'year of passing'), mustChange: true });
-          created.push(email);
+          created.push({ name, email, password });
         } catch (e) { skipped.push({ row: i + 1, email, reason: e.message }); }
       }
-      return sendJSON(res, 200, { createdCount: created.length, skipped });
+      // Email each new student their login details (background; doesn't block the response).
+      const willEmail = b.emailInvites !== false && mailer.configured() && created.length > 0;
+      if (willEmail) sendInvitesInBackground(created);
+      return sendJSON(res, 200, { createdCount: created.length, skipped, emailed: willEmail });
     }
 
     // ---- ADMIN OVERVIEW (dashboard stats) ----

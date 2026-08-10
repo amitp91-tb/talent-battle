@@ -930,6 +930,7 @@ async function renderStudents(){
         <div class="field"><label>Default batch (for rows with no batch)</label><select id="bulk-batch">${opts('')}</select></div>
       </div>
       <div class="field"><label>…or paste CSV here</label><textarea id="bulk-text" style="height:90px" placeholder="name,email,password,batch"></textarea></div>
+      <label class="chk" style="display:flex;align-items:center;gap:8px;margin:6px 0"><input type="checkbox" id="bulk-email" checked> Email each student their login details (login link + temporary password)</label>
       <button class="btn btn-primary" onclick="bulkUpload()">Upload students</button>
       <div id="bulkresult" class="muted" style="margin-top:8px"></div>
     </div>
@@ -1198,9 +1199,12 @@ async function bulkUpload(){
   const el = document.getElementById('bulkresult');
   const post = async (payload)=>{
     el.textContent='Uploading…';
-    const { status, body } = await apiPost('/api/admin/students/bulk', { ...payload, defaultBatchId: val('bulk-batch') });
+    const emailInvites = (document.getElementById('bulk-email')||{}).checked !== false;
+    const { status, body } = await apiPost('/api/admin/students/bulk', { ...payload, emailInvites, defaultBatchId: val('bulk-batch') });
     if(status!==200){ el.textContent = body.error||'Upload failed'; return; }
     let msg = 'Added '+body.createdCount+' student(s).';
+    if(body.emailed) msg += ' Emailing login details to each student…';
+    else if(emailInvites) msg += ' (Email not sent — SMTP not configured on the server.)';
     if(body.skipped && body.skipped.length) msg += ' Skipped '+body.skipped.length+': '+body.skipped.map(x=>x.email+' ('+x.reason+')').join('; ');
     toast('Added '+body.createdCount+' students ✓');
     renderStudents(); setTimeout(()=>{ const e=document.getElementById('bulkresult'); if(e) e.textContent=msg; }, 50);
