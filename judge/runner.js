@@ -129,6 +129,7 @@ async function judge({ language, code, testCases,
           overall: VERDICT.COMPILE_ERROR,
           passed: 0,
           total: testCases.length,
+          score: 0,
           compileOutput: c.stderr.trim() || c.stdout.trim(),
           results: [],
         };

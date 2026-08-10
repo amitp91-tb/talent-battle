@@ -102,7 +102,7 @@ const userForToken = (t) => {
 
 function addSubmission(s) {
   db.prepare(`INSERT INTO submissions (user_id,problem_id,title,tags,language,score,overall,at,source,violations,runtime_ms,memory_kb)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(s.userId, s.problemId, s.title, J(s.tags), s.language, s.score, s.overall,
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(s.userId, s.problemId, s.title, J(s.tags), s.language, Number(s.score) || 0, s.overall,
     s.at, s.source || '', s.violations || 0, s.runtimeMs == null ? null : s.runtimeMs, s.memoryKb == null ? null : s.memoryKb);
 }
 const subRow = (r) => ({ userId: r.user_id, problemId: r.problem_id, title: r.title, tags: P(r.tags),
