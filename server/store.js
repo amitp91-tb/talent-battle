@@ -82,6 +82,36 @@ function createQuestion(input, createdBy) {
     harness: (input.harness && typeof input.harness === 'object') ? input.harness : {} };
   insert(q); return q;
 }
+function updateQuestion(id, input) {
+  const ex = getById(id); if (!ex) return null;
+  const pick = (v, d) => (v == null ? d : v);
+  const q = {
+    title: (input.title || ex.title).trim(),
+    difficulty: input.difficulty || ex.difficulty,
+    tags: Array.isArray(input.tags) ? input.tags : String(input.tags == null ? (ex.tags || []).join(',') : input.tags).split(',').map((s) => s.trim()).filter(Boolean),
+    topic: pick(input.topic, ex.topic),
+    statement: pick(input.statement, ex.statement),
+    timeLimitMs: Number(input.timeLimitMs) || ex.timeLimitMs || 2000,
+    memoryMb: Number(input.memoryMb) || ex.memoryMb || 256,
+    checker: ['token', 'exact', 'float'].includes(input.checker) ? input.checker : ex.checker,
+    floatTolerance: input.floatTolerance ? Number(input.floatTolerance) : (ex.floatTolerance ?? null),
+    points: Number(input.points) || ex.points || 100,
+    samples: input.samples ? cleanCases(input.samples) : (ex.samples || []),
+    hidden: input.hidden ? cleanCases(input.hidden) : (ex.hidden || []),
+    reference: pick(input.reference, ex.reference),
+    timeComplexity: pick(input.timeComplexity, ex.timeComplexity),
+    spaceComplexity: pick(input.spaceComplexity, ex.spaceComplexity),
+    solutions: (input.solutions && typeof input.solutions === 'object') ? input.solutions
+      : (input.reference != null ? { ...(ex.solutions || {}), python: input.reference } : (ex.solutions || {})),
+    mode: input.mode === 'function' ? 'function' : (input.mode === 'stdio' ? 'stdio' : ex.mode),
+    harness: (input.harness && typeof input.harness === 'object') ? input.harness : (ex.harness || {}),
+  };
+  db.prepare(`UPDATE questions SET title=?,difficulty=?,tags=?,topic=?,statement=?,time_limit_ms=?,memory_mb=?,checker=?,float_tolerance=?,points=?,samples=?,hidden=?,reference=?,time_complexity=?,space_complexity=?,solutions=?,mode=?,harness=? WHERE id=?`)
+    .run(q.title, q.difficulty, J(q.tags), q.topic, q.statement, q.timeLimitMs, q.memoryMb, q.checker, q.floatTolerance ?? null, q.points,
+      J(q.samples), J(q.hidden), q.reference || '', q.timeComplexity || '', q.spaceComplexity || '',
+      JSON.stringify(q.solutions || {}), q.mode || 'stdio', JSON.stringify(q.harness || {}), id);
+  return getById(id);
+}
 const deleteQuestion = (id) => db.prepare('DELETE FROM questions WHERE id=?').run(id).changes > 0;
 function setSolutionsByTitle(title, solutions){
   const r = db.prepare('SELECT id FROM questions WHERE title=?').get(title);
@@ -111,4 +141,4 @@ function setSolutionsByTitle(title, solutions){
   }
 })();
 
-module.exports = { listPublic, getById, getPublic, toTestCases, listAdmin, getAdmin: getById, createQuestion, deleteQuestion, setSolutionsByTitle };
+module.exports = { listPublic, getById, getPublic, toTestCases, listAdmin, getAdmin: getById, createQuestion, updateQuestion, deleteQuestion, setSolutionsByTitle };

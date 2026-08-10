@@ -78,14 +78,6 @@ function sendStudentInvite(u) {
       + `<tr><td><b>Temporary password</b></td><td>${eh(u.password)}</td></tr></table>`
       + `<p>You'll be asked to set your own password the first time you log in.</p><p>— Talent Battle</p>` });
 }
-// Email a batch of new students their credentials, gently throttled for SES.
-async function sendInvitesInBackground(list) {
-  for (const u of list) {
-    try { await sendStudentInvite(u); }
-    catch (e) { console.error('[invite] email failed for', u.email, '-', e.message); }
-    await new Promise((r) => setTimeout(r, 120));
-  }
-}
 const isAdmin = (u) => u && u.role === 'admin';
 const isStaff = (u) => u && (u.role === 'admin' || u.role === 'subadmin');
 
@@ -595,6 +587,12 @@ async function handleApi(req, res, url) {
     const am = url.match(/^\/api\/admin\/questions\/([^/]+)$/);
     if (req.method === 'GET' && am) { const q = store.getAdmin(am[1]);
       return q ? sendJSON(res, 200, q) : sendJSON(res, 404, { error: 'not found' }); }
+    if (req.method === 'POST' && am) {
+      const b = await readBody(req);
+      if (b.title != null && !String(b.title).trim()) return sendJSON(res, 400, { error: 'Title cannot be empty.' });
+      const q = store.updateQuestion(am[1], b);
+      return q ? sendJSON(res, 200, { question: { id: q.id, title: q.title } }) : sendJSON(res, 404, { error: 'not found' });
+    }
     if (req.method === 'POST' && url === '/api/admin/questions') {
       const b = await readBody(req);
       if (!b.title || !b.statement) return sendJSON(res, 400, { error: 'Title and statement are required.' });
@@ -639,9 +637,12 @@ async function handleApi(req, res, url) {
         const u = auth.createUser({ name: b.name, email: b.email, password: b.password, role: 'student',
           batch: batch ? batch.name : '', batchId: batch ? batch.id : '',
           mobile: b.mobile, branch: b.branch, yearOfPassing: b.yearOfPassing, mustChange: true });
-        if (b.emailInvites !== false && mailer.configured())
-          sendInvitesInBackground([{ name: b.name, email: b.email, password: b.password }]);
-        return sendJSON(res, 200, { user: auth.publicUser(u), emailed: b.emailInvites !== false && mailer.configured() });
+        let emailed = false, emailError = '';
+        if (b.emailInvites !== false && mailer.configured()) {
+          try { await sendStudentInvite({ name: b.name, email: b.email, password: b.password }); emailed = true; }
+          catch (e) { emailError = String(e.message || e); console.error('[invite] failed for', b.email, '-', e.message); }
+        }
+        return sendJSON(res, 200, { user: auth.publicUser(u), emailed, emailError });
       } catch (e) { return sendJSON(res, 400, { error: e.message }); }
     }
     const sm = url.match(/^\/api\/admin\/students\/([^/]+)\/batch$/);
@@ -755,10 +756,17 @@ async function handleApi(req, res, url) {
           created.push({ name, email, password });
         } catch (e) { skipped.push({ row: i + 1, email, reason: e.message }); }
       }
-      // Email each new student their login details (background; doesn't block the response).
-      const willEmail = b.emailInvites !== false && mailer.configured() && created.length > 0;
-      if (willEmail) sendInvitesInBackground(created);
-      return sendJSON(res, 200, { createdCount: created.length, skipped, emailed: willEmail });
+      // Email each new student their login details and report the real outcome
+      // (so the admin sees exactly how many were sent, and any failures).
+      let emailedCount = 0; const emailErrors = [];
+      if (b.emailInvites !== false && mailer.configured() && created.length) {
+        for (const u of created) {
+          try { await sendStudentInvite(u); emailedCount++; }
+          catch (e) { emailErrors.push({ email: u.email, reason: String(e.message || e) }); console.error('[invite] failed for', u.email, '-', e.message); }
+          await new Promise((r) => setTimeout(r, 80));   // gentle SES throttle
+        }
+      }
+      return sendJSON(res, 200, { createdCount: created.length, skipped, emailedCount, emailErrors, smtp: mailer.configured() });
     }
 
     // ---- ADMIN OVERVIEW (dashboard stats) ----

@@ -727,6 +727,7 @@ async function renderAdminQuestions(){
         <div class="tags">${esc((q.tags||[]).join(' · '))} &nbsp;·&nbsp; ${q.sampleCount} open, ${q.hiddenCount} hidden tests</div></div>
       <span class="grow"></span>
       <span class="pill ${pillClass(q.difficulty)}">${esc(q.difficulty)}</span>
+      <button class="btn btn-ghost" onclick="renderEditQuestion('${q.id}')">Edit</button>
       <button class="btn btn-ghost" onclick="delQuestion('${q.id}', this)">Delete</button>
     </div>`).join('') || '<p class="muted">No questions yet. Click “New question” to create one.</p>';
   app.innerHTML = `<div style="display:flex;align-items:center;gap:12px">
@@ -740,6 +741,45 @@ async function delQuestion(id, btn){
   if(!confirm('Delete "'+title+'"? This cannot be undone.')) return;
   await fetch('/api/admin/questions/'+id, { method:'DELETE' });
   renderAdminQuestions();
+}
+async function renderEditQuestion(id){
+  stopTimer();
+  const q = await apiGet('/api/admin/questions/'+id);
+  if(!q || !q.id){ toast('Question not found'); renderAdminQuestions(); return; }
+  const diffOpts=['easy','medium','hard'].map(x=>`<option ${x===q.difficulty?'selected':''}>${x}</option>`).join('');
+  const chkOpts=['token','exact','float'].map(x=>`<option value="${x}" ${x===q.checker?'selected':''}>${x}</option>`).join('');
+  app.innerHTML=`<div class="test-top"><button class="btn btn-ghost" onclick="renderAdminQuestions()">← Questions</button></div>
+    <h1>Edit question</h1><div id="eqerr" class="err"></div>
+    <div class="card">
+      <div class="field"><label>Title</label><input id="eq-title" value="${esc(q.title)}"></div>
+      <div class="split">
+        <div class="field"><label>Difficulty</label><select id="eq-diff">${diffOpts}</select></div>
+        <div class="field"><label>Answer checking</label><select id="eq-checker">${chkOpts}</select></div>
+      </div>
+      <div class="field"><label>Tags (comma separated)</label><input id="eq-tags" value="${esc((q.tags||[]).join(', '))}"></div>
+      <div class="field"><label>Statement</label><textarea id="eq-statement" style="height:130px">${esc(q.statement)}</textarea>
+        <button class="btn btn-ghost" type="button" style="margin-top:6px" onclick="uploadImage('eq-statement')">📷 Upload image</button></div>
+      ${q.mode==='function'?'<p class="muted">Function-mode question — you can edit the statement and test cases here; the function harness/starters stay unchanged.</p>':''}
+      <div class="split">
+        <div class="field"><label>Time complexity (optional)</label><input id="eq-tc" value="${esc(q.timeComplexity||'')}"></div>
+        <div class="field"><label>Space complexity (optional)</label><input id="eq-sc" value="${esc(q.spaceComplexity||'')}"></div>
+      </div>
+      <div class="field"><label>Reference solution (Python)</label><textarea id="eq-ref" class="editor" style="height:120px">${esc(q.reference||'')}</textarea></div>
+      <h2 style="margin-top:14px">Open (visible) test cases</h2><div id="eq-samples">${caseInputs(q.samples)}</div>
+      <button class="btn btn-ghost" onclick="document.getElementById('eq-samples').insertAdjacentHTML('beforeend', caseRowHTML())">+ Add open case</button>
+      <h2 style="margin-top:16px">Hidden test cases</h2><div id="eq-hidden">${caseInputs(q.hidden)}</div>
+      <button class="btn btn-ghost" onclick="document.getElementById('eq-hidden').insertAdjacentHTML('beforeend', caseRowHTML())">+ Add hidden case</button>
+      <div style="margin-top:16px"><button class="btn btn-primary" onclick="saveEditQuestion('${q.id}')">Save changes</button></div>
+    </div>`;
+}
+async function saveEditQuestion(id){
+  const collect=(sel)=>[...document.querySelectorAll('#'+sel+' .caserow')].map(r=>({input:r.querySelector('.io-in').value, expected:r.querySelector('.io-out').value}));
+  const payload={ title:val('eq-title'), difficulty:val('eq-diff'), checker:val('eq-checker'), tags:val('eq-tags'),
+    statement:val('eq-statement'), timeComplexity:val('eq-tc'), spaceComplexity:val('eq-sc'), reference:val('eq-ref'),
+    samples:collect('eq-samples'), hidden:collect('eq-hidden') };
+  const { status, body } = await apiPost('/api/admin/questions/'+id, payload);
+  if(status!==200){ document.getElementById('eqerr').textContent = body.error||'Could not save'; return; }
+  toast('Question saved ✓'); renderAdminQuestions();
 }
 function caseRowHTML(){
   return `<div class="caserow">
@@ -1139,13 +1179,13 @@ async function doExamSubmit(id){
 }
 async function finishTest(auto){
   const t=window.__test; if(!t) return;
-  const testId=t.id, title=t.title;
+  const testId=t.id, title=t.title, questions=t.questions;   // keep titles for the results table
   advancing=false;                                 // ensure the full exam teardown runs
   stopExam(); window.__test=null; window.__examKind=null;
   let body={};
   try{ const r=await apiPost('/api/test/finish',{ testId }); body=r.body||{}; }catch(e){}
   renderUserbar();
-  renderTestDone(Object.assign({ title }, body));
+  renderTestDone(Object.assign({ title, questions }, body));
   if(auto) toast('⚠ Test auto-submitted after too many warnings');
 }
 function renderTestDone(d){
@@ -1223,13 +1263,14 @@ function downloadTemplate(){
 async function bulkUpload(){
   const el = document.getElementById('bulkresult');
   const post = async (payload)=>{
-    el.textContent='Uploading…';
     const emailInvites = (document.getElementById('bulk-email')||{}).checked !== false;
+    el.textContent = emailInvites ? 'Uploading & emailing login details…' : 'Uploading…';
     const { status, body } = await apiPost('/api/admin/students/bulk', { ...payload, emailInvites, defaultBatchId: val('bulk-batch') });
     if(status!==200){ el.textContent = body.error||'Upload failed'; return; }
     let msg = 'Added '+body.createdCount+' student(s).';
-    if(body.emailed) msg += ' Emailing login details to each student…';
-    else if(emailInvites) msg += ' (Email not sent — SMTP not configured on the server.)';
+    if(emailInvites && !body.smtp) msg += ' (Email not sent — SMTP is not configured on the server.)';
+    else if(body.emailedCount!=null) msg += ' Emailed '+body.emailedCount+' login'+(body.emailedCount===1?'':'s')+'.';
+    if(body.emailErrors && body.emailErrors.length) msg += ' '+body.emailErrors.length+' email(s) FAILED: '+body.emailErrors.slice(0,3).map(x=>x.email+' ('+x.reason+')').join('; ');
     if(body.skipped && body.skipped.length) msg += ' Skipped '+body.skipped.length+': '+body.skipped.map(x=>x.email+' ('+x.reason+')').join('; ');
     toast('Added '+body.createdCount+' students ✓');
     renderStudents(); setTimeout(()=>{ const e=document.getElementById('bulkresult'); if(e) e.textContent=msg; }, 50);
