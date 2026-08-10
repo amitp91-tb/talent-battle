@@ -880,10 +880,10 @@ async function renderStudents(){
       <button class="btn btn-primary" onclick="addStudent()">+ Add student</button>
       <div id="stuerr" class="err"></div>
     </div>
-    <div class="card" style="margin-bottom:14px"><h2>Bulk upload students (CSV)</h2>
-      <p class="muted" style="margin-top:0">In Excel choose <b>File → Save As → CSV</b>. Columns: <span class="k">name,email,password,mobile,college,branch,year,batch</span> (only name &amp; email required). <a href="#" onclick="downloadTemplate();return false;">Download template</a></p>
+    <div class="card" style="margin-bottom:14px"><h2>Bulk upload students (Excel or CSV)</h2>
+      <p class="muted" style="margin-top:0">Upload an Excel <b>.xlsx</b> file (or a CSV). Columns: <span class="k">name, email, password, batch, college, mobile, branch, year</span> — only <b>name</b> &amp; <b>email</b> are required. Leave <b>password</b> blank and the student sets their own on first login. The <b>batch</b> column creates the batch if it doesn't exist. <a href="#" onclick="downloadTemplate();return false;"><b>Download Excel template</b></a></p>
       <div class="split">
-        <div class="field"><label>Choose CSV file</label><input type="file" id="bulk-file" accept=".csv"></div>
+        <div class="field"><label>Choose Excel (.xlsx) or CSV file</label><input type="file" id="bulk-file" accept=".xlsx,.csv"></div>
         <div class="field"><label>Default batch (for rows with no batch)</label><select id="bulk-batch">${opts('')}</select></div>
       </div>
       <div class="field"><label>…or paste CSV here</label><textarea id="bulk-text" style="height:90px" placeholder="name,email,password,batch"></textarea></div>
@@ -1064,17 +1064,17 @@ async function resetPassword(id, email){
   toast(status===200 ? 'Password reset ✓' : (body.error||'Could not reset'));
 }
 function downloadTemplate(){
-  const csv = 'name,email,password,mobile,college,branch,year,batch\nRahul Sharma,rahul@abc.edu,pass1234,9876543210,ABC College,CSE,2027,\nPriya Patil,priya@abc.edu,,9876500000,ABC College,IT,2026,\n';
+  // Cookie-authed GET that returns an .xlsx attachment — downloads without leaving the SPA.
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
-  a.download = 'students-template.csv'; a.click();
+  a.href = '/api/admin/students/template.xlsx';
+  a.download = 'talent-battle-students-template.xlsx';
+  document.body.appendChild(a); a.click(); a.remove();
 }
 async function bulkUpload(){
   const el = document.getElementById('bulkresult');
-  const send = async (csv)=>{
-    if(!csv || !csv.trim()){ el.textContent='Please choose a file or paste CSV.'; return; }
+  const post = async (payload)=>{
     el.textContent='Uploading…';
-    const { status, body } = await apiPost('/api/admin/students/bulk', { csv, defaultBatchId: val('bulk-batch') });
+    const { status, body } = await apiPost('/api/admin/students/bulk', { ...payload, defaultBatchId: val('bulk-batch') });
     if(status!==200){ el.textContent = body.error||'Upload failed'; return; }
     let msg = 'Added '+body.createdCount+' student(s).';
     if(body.skipped && body.skipped.length) msg += ' Skipped '+body.skipped.length+': '+body.skipped.map(x=>x.email+' ('+x.reason+')').join('; ');
@@ -1082,8 +1082,20 @@ async function bulkUpload(){
     renderStudents(); setTimeout(()=>{ const e=document.getElementById('bulkresult'); if(e) e.textContent=msg; }, 50);
   };
   const f = document.getElementById('bulk-file');
-  if(f.files && f.files[0]){ const r=new FileReader(); r.onload=()=>send(r.result); r.readAsText(f.files[0]); }
-  else send(val('bulk-text'));
+  if(f && f.files && f.files[0]){
+    const file = f.files[0];
+    if(/\.xlsx$/i.test(file.name)){
+      const r=new FileReader();
+      r.onload=()=>{ const b64=(String(r.result).split(',')[1])||''; if(!b64){ el.textContent='Could not read the Excel file.'; return; } post({ xlsx:b64 }); };
+      r.readAsDataURL(file); return;
+    }
+    const r=new FileReader();
+    r.onload=()=>{ const t=String(r.result||''); if(!t.trim()){ el.textContent='The file looks empty.'; return; } post({ csv:t }); };
+    r.readAsText(file); return;
+  }
+  const t = val('bulk-text');
+  if(!t || !t.trim()){ el.textContent='Please choose a file or paste CSV.'; return; }
+  post({ csv:t });
 }
 
 

@@ -21,6 +21,7 @@ const { db } = require('./db');
 const jobQueue = require('./queue');
 const harnessGen = require('./harness-gen');
 const mailer = require('./mailer');
+const xlsx = require('./xlsx');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -587,13 +588,37 @@ async function handleApi(req, res, url) {
       catch (e) { return sendJSON(res, 400, { error: e.message }); }
     }
 
-    // ---- BULK STUDENT UPLOAD (CSV) ----
+    // ---- DOWNLOAD an .xlsx upload template ----
+    if (req.method === 'GET' && url === '/api/admin/students/template.xlsx') {
+      const buf = xlsx.build([
+        ['name', 'email', 'password', 'batch', 'college', 'mobile', 'branch', 'year'],
+        ['Asha Rao', 'asha@college.edu', 'Asha@2026', 'ABC College · CSE · 2026', 'ABC College', '9876543210', 'CSE', '2026'],
+        ['Vikram Nair', 'vikram@college.edu', '', 'ABC College · CSE · 2026', 'ABC College', '9876500000', 'CSE', '2026'],
+      ], 'Students');
+      res.writeHead(200, {
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'Content-Disposition': 'attachment; filename="talent-battle-students-template.xlsx"',
+        'Content-Length': buf.length,
+      });
+      return res.end(buf);
+    }
+
+    // ---- BULK STUDENT UPLOAD (CSV or Excel .xlsx) ----
     if (req.method === 'POST' && url === '/api/admin/students/bulk') {
       const b = await readBody(req);
-      const lines = String(b.csv || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-      if (!lines.length) return sendJSON(res, 400, { error: 'No rows found.' });
+      // Accept either an uploaded .xlsx (base64 in b.xlsx) or CSV text (b.csv).
+      let rows;
+      if (b.xlsx) {
+        try { rows = xlsx.parse(Buffer.from(String(b.xlsx), 'base64')); }
+        catch (e) { return sendJSON(res, 400, { error: 'Could not read the Excel file: ' + (e.message || 'invalid .xlsx') }); }
+      } else {
+        rows = String(b.csv || '').split(/\r?\n/).map((l) => l.split(','));
+      }
+      // trim every cell, drop fully-empty rows
+      rows = rows.map((r) => r.map((c) => String(c == null ? '' : c).trim())).filter((r) => r.some((c) => c));
+      if (!rows.length) return sendJSON(res, 400, { error: 'No rows found.' });
       // header row maps columns; must include name and email
-      let header = lines[0].toLowerCase().split(',').map((h) => h.trim());
+      let header = rows[0].map((h) => h.toLowerCase().trim());
       let start = 0;
       if (header.includes('name') && header.includes('email')) start = 1;
       else header = ['name', 'email', 'password', 'batch'];
@@ -602,8 +627,8 @@ async function handleApi(req, res, url) {
       const batchByName = {};
       for (const bt of groups.list()) batchByName[bt.name.toLowerCase()] = bt;
       const created = [], skipped = [];
-      for (let i = start; i < lines.length; i++) {
-        const parts = lines[i].split(',');
+      for (let i = start; i < rows.length; i++) {
+        const parts = rows[i];
         const name = col(parts, 'name'), email = col(parts, 'email');
         let password = col(parts, 'password') || 'changeme123';
         const batchName = col(parts, 'batch');
