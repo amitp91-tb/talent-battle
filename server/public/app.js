@@ -223,13 +223,16 @@ function renderUserbar(){
   } else if(ME.role==='subadmin'){
     nav = `<button onclick="renderFaculty()">Results</button>`;
   } else {
-    nav = `<button onclick="renderStudentTests()">My Tests</button>
-           <button onclick="renderMyResults()">My Results</button>
-           <button onclick="renderContests()">Contests</button>
-           <button onclick="renderChallenge()">100 Days</button>
-           <button onclick="renderLeaderboard()">Leaderboard</button>
-           <button onclick="renderList()">All Problems</button>
-           <button onclick="renderDashboard()">My Dashboard</button>`;
+    const f = ME.features || {};
+    const on = (k)=> f[k] !== false;   // default on if not specified
+    const items = [];
+    if(on('tests')){ items.push('<button onclick="renderStudentTests()">My Tests</button>'); items.push('<button onclick="renderMyResults()">My Results</button>'); }
+    if(on('contests')) items.push('<button onclick="renderContests()">Contests</button>');
+    if(on('challenge')) items.push('<button onclick="renderChallenge()">100 Days</button>');
+    if(on('leaderboard')) items.push('<button onclick="renderLeaderboard()">Leaderboard</button>');
+    if(on('problems')) items.push('<button onclick="renderList()">All Problems</button>');
+    items.push('<button onclick="renderDashboard()">My Dashboard</button>');
+    nav = items.join('');
   }
   userbar.innerHTML = `<nav>${nav}</nav>
     <span class="who">${esc(ME.name)} · ${esc(ME.role)}</span>
@@ -919,14 +922,25 @@ async function submitQuestion(){
 async function renderBatches(){
   stopTimer();
   const list = await apiGet('/api/admin/batches');
-  const rows = list.map(b=>`
-    <div class="card prow">
-      <div><div class="t">${esc(b.name)}</div><div class="tags">${b.students} student(s)</div></div>
-      <span class="grow"></span>
-      <button class="btn btn-ghost" onclick="delBatch('${b.id}','${esc(b.name).replace(/'/g,"\\'")}')">Delete</button>
-    </div>`).join('') || '<p class="muted">No batches yet. Create one below.</p>';
+  const FLABEL = { tests:'Tests', challenge:'100 Days', contests:'Contests', problems:'All Problems', leaderboard:'Leaderboard' };
+  const rows = list.map(b=>{
+    const f = b.features||{};
+    const checks = Object.keys(FLABEL).map(k=>`<label class="chk" style="margin-right:14px"><input type="checkbox" class="feat-${b.id}" data-k="${k}" ${f[k]!==false?'checked':''}> ${FLABEL[k]}</label>`).join('');
+    return `<div class="card">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div class="t">${esc(b.name)}</div><span class="muted">${b.students} student(s)</span>
+        <span class="grow"></span>
+        <button class="btn btn-ghost" onclick="delBatch('${b.id}','${esc(b.name).replace(/'/g,"\\'")}')">Delete</button>
+      </div>
+      <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--line)">
+        <span class="muted" style="font-size:12px">Modules students in this batch can see:</span><br>
+        <div style="margin-top:6px">${checks}
+        <button class="btn btn-primary" style="padding:3px 12px" onclick="saveBatchFeatures('${b.id}', this)">Save modules</button></div>
+      </div>
+    </div>`;
+  }).join('') || '<p class="muted">No batches yet. Create one below.</p>';
   app.innerHTML = `<h1>Batches</h1>
-    <p class="muted">Group students into batches (e.g. CSE-A 2027). You’ll assign batches to sub-admins later.</p>
+    <p class="muted">Group students into batches (e.g. CSE-A 2027). Tick which modules each batch sees — e.g. a college that only needs Tests.</p>
     <div class="card" style="margin:14px 0">
       <div class="split">
         <div class="field"><label>College</label><input id="b-college" placeholder="ABC Engineering College"></div>
@@ -948,6 +962,12 @@ async function addBatch(){
 async function delBatch(id, name){
   if(!confirm('Delete batch "'+name+'"? Students in it become unassigned.')) return;
   await fetch('/api/admin/batches/'+id, { method:'DELETE' }); renderBatches();
+}
+async function saveBatchFeatures(id, btn){
+  const features={};
+  document.querySelectorAll('.feat-'+id).forEach(c=>{ features[c.dataset.k]=c.checked; });
+  const { status, body } = await apiPost('/api/admin/batches/'+id+'/features', { features });
+  toast(status===200 ? 'Modules updated ✓' : (body.error||'Could not save'));
 }
 
 // ---------- ADMIN: STUDENTS ----------

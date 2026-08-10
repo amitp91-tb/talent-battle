@@ -62,6 +62,8 @@ function parseCookies(req) {
 }
 const currentUser = (req) => { const c = parseCookies(req); return c.tb_session ? auth.userForToken(c.tb_session) : null; };
 const cookieHeader = (t) => ({ 'Set-Cookie': `tb_session=${t}; HttpOnly; Path=/; SameSite=Lax; Max-Age=604800` });
+// publicUser + the per-batch module toggles a student is allowed to see.
+function publicUserFull(u) { const pu = auth.publicUser(u); if (u && u.role === 'student') pu.features = groups.featuresFor(u.batchId); return pu; }
 
 // Email one student their login details (temporary password + login URL).
 function sendStudentInvite(u) {
@@ -117,7 +119,7 @@ async function handleApi(req, res, url) {
     const b = await readBody(req); const u = auth.findByEmail(b.email);
     if (!u || !auth.verifyPassword(b.password || '', u.pass)) return sendJSON(res, 401, { error: 'Wrong email or password.' });
     const t = auth.startSession(u.id);
-    return sendJSON(res, 200, { user: auth.publicUser(u) }, cookieHeader(t));
+    return sendJSON(res, 200, { user: publicUserFull(u) }, cookieHeader(t));
   }
   if (req.method === 'POST' && url === '/api/logout') {
     const c = parseCookies(req); if (c.tb_session) auth.endSession(c.tb_session);
@@ -125,7 +127,7 @@ async function handleApi(req, res, url) {
   }
   if (req.method === 'GET' && url === '/api/me') {
     const u = currentUser(req);
-    return sendJSON(res, 200, { user: u ? auth.publicUser(u) : null, isFirstUser: auth.allUsers().length === 0 });
+    return sendJSON(res, 200, { user: u ? publicUserFull(u) : null, isFirstUser: auth.allUsers().length === 0 });
   }
   // ---- PROCTORING: a student uploads a webcam snapshot during a Test ----
   if (req.method === 'POST' && url === '/api/proctor/snapshot') {
@@ -204,7 +206,11 @@ async function handleApi(req, res, url) {
     return sendJSON(res, 200, { available: AVAILABLE,
       labels: Object.fromEntries(Object.entries(LANGUAGES).map(([k, v]) => [k, v.label])) });
   }
-  if (req.method === 'GET' && url === '/api/problems') return sendJSON(res, 200, store.listPublic());
+  if (req.method === 'GET' && url === '/api/problems') {
+    const me = currentUser(req);
+    if (me && me.role === 'student' && !groups.featuresFor(me.batchId).problems) return sendJSON(res, 200, []);
+    return sendJSON(res, 200, store.listPublic());
+  }
   const pm = url.match(/^\/api\/problems\/([^/]+)$/);
   if (req.method === 'GET' && pm) {
     const p = store.getPublic(pm[1]); if (!p) return sendJSON(res, 404, { error: 'not found' });
@@ -386,6 +392,7 @@ async function handleApi(req, res, url) {
   // ---- STUDENT: assigned tests / challenges ----
   if (req.method === 'GET' && url === '/api/tests') {
     const me = currentUser(req); if (!me) return sendJSON(res, 401, { error: 'login required' });
+    if (me.role === 'student' && !groups.featuresFor(me.batchId).tests) return sendJSON(res, 200, []);
     const my = tests.forBatch(me.batchId || '');
     return sendJSON(res, 200, my.map((t) => { const a = attempts.get(me.id, t.id);
       return { id: t.id, title: t.title, description: t.description, questionCount: t.questionIds.length,
@@ -434,6 +441,7 @@ async function handleApi(req, res, url) {
   // ---- 100 DAYS OF CODE ----
   if (req.method === 'GET' && url === '/api/challenge') {
     const me = currentUser(req); if (!me) return sendJSON(res, 401, { error: 'login required' });
+    if (me.role === 'student' && !groups.featuresFor(me.batchId).challenge) return sendJSON(res, 200, { total: 0, solvedCount: 0, days: [] });
     const subs = auth.userSubmissions(me.id);
     const solved = new Set(subs.filter((x) => x.overall === 'Accepted').map((x) => x.problemId));
     const attempted = new Set(subs.map((x) => x.problemId));
@@ -482,6 +490,7 @@ async function handleApi(req, res, url) {
   // ---- CONTESTS (student) ----
   if (req.method === 'GET' && url === '/api/contests') {
     const me = currentUser(req); if (!me) return sendJSON(res, 401, { error: 'login required' });
+    if (me.role === 'student' && !groups.featuresFor(me.batchId).contests) return sendJSON(res, 200, []);
     const mine = contests.forBatch(me.batchId || '');
     return sendJSON(res, 200, mine.map((c) => ({ id: c.id, title: c.title, description: c.description,
       startAt: c.startAt, endAt: c.endAt, status: contests.status(c), problems: c.problemIds.length })));
@@ -618,6 +627,13 @@ async function handleApi(req, res, url) {
     if (req.method === 'DELETE' && bm) {
       for (const u of auth.allUsers()) if (u.batchId === bm[1]) auth.updateUser(u.id, { batchId: '', batch: '' });
       return sendJSON(res, 200, { ok: groups.remove(bm[1]) });
+    }
+    // Set which modules this batch's students can see.
+    const bfm = url.match(/^\/api\/admin\/batches\/([^/]+)\/features$/);
+    if (req.method === 'POST' && bfm) {
+      const b = await readBody(req);
+      const ok = groups.setFeatures(bfm[1], b.features || {});
+      return ok ? sendJSON(res, 200, { ok: true, features: groups.getById(bfm[1]).features }) : sendJSON(res, 404, { error: 'batch not found' });
     }
 
     // ---- STUDENTS ----

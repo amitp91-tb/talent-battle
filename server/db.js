@@ -71,6 +71,7 @@ addColumn('questions','mode','TEXT'); addColumn('questions','harness','TEXT');
 addColumn('challenge','time_complexity','TEXT'); addColumn('challenge','space_complexity','TEXT'); addColumn('challenge','solutions','TEXT');
 addColumn('users','must_change_password','INTEGER');
 addColumn('tests','duration_min','INTEGER');
+addColumn('batches','features','TEXT');
 
 const J = (v) => JSON.stringify(v == null ? [] : v);
 const P = (s) => { try { return JSON.parse(s || '[]'); } catch { return []; } };
