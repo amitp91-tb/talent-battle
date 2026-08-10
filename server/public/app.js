@@ -224,6 +224,7 @@ function renderUserbar(){
     nav = `<button onclick="renderFaculty()">Results</button>`;
   } else {
     nav = `<button onclick="renderStudentTests()">My Tests</button>
+           <button onclick="renderMyResults()">My Results</button>
            <button onclick="renderContests()">Contests</button>
            <button onclick="renderChallenge()">100 Days</button>
            <button onclick="renderLeaderboard()">Leaderboard</button>
@@ -278,15 +279,18 @@ function renderTest(d){
   stopTimer();
   const samplesHtml = (d.samples||[]).map((sm,i)=>`<div class="io"><b>Example ${i+1} · Input</b>${esc((sm.input||'').trim())}</div><div class="io"><b>Example ${i+1} · Output</b>${esc((sm.expected||'').trim())}</div>`).join('') || '<p class="muted">No public examples.</p>';
   curProblem = d;
+  const inTest = !!window.__test;
+  if(examMode && examKind==='test') userbar.innerHTML='';   // hide the top nav during a Test
+  const qpos = inTest ? ` — Question ${window.__test.idx+1} of ${window.__test.questions.length}` : '';
   const fnMode = !!(d.meta && d.meta.mode==='function');
   const availLangs = (fnMode ? (d.functionLangs||[]) : Object.keys(LANGS.labels)).filter(k=>LANGS.available[k]);
   const startLang = availLangs[0] || firstAvailableLang();
   const langOpts = (availLangs.length?availLangs:Object.keys(LANGS.labels).filter(k=>LANGS.available[k])).map(k=>`<option value="${k}">${esc(LANGS.labels[k]||k)}</option>`).join('');
   app.innerHTML = `
-    ${examMode?'<div class="exambar">🔒 Exam in progress — stay in full screen &amp; do not switch tabs. Violations are recorded.</div>':''}
+    ${examMode?`<div class="exambar" style="font-size:15px;font-weight:600">🔒 Exam in progress${qpos}. Full screen required · copy/paste &amp; tab-switch are disabled and recorded.</div>`:''}
     <div class="test-top">
-      <button class="btn btn-ghost" onclick="renderList()">← Problems</button>
-      <span class="proctor" id="proctor-badge">Proctoring: on</span>
+      ${examMode?'':`<button class="btn btn-ghost" onclick="renderList()">← Problems</button>`}
+      <span class="proctor" id="proctor-badge" ${examMode?'style="font-size:16px;font-weight:800;padding:7px 14px"':''}>Proctoring: on</span>
       <div class="timer" id="timer">30:00</div>
     </div>
     <div class="split">
@@ -303,7 +307,7 @@ function renderTest(d){
           <select id="lang" onchange="onLangChange()">${langOpts}</select>
           <span class="grow"></span>
           <button class="btn btn-ghost" onclick="doRun('${d.meta.id}')">▷ Run</button>
-          <button class="btn btn-primary" onclick="doSubmit('${d.meta.id}')">Submit</button>
+          <button class="btn btn-primary" onclick="${inTest?`doExamSubmit('${d.meta.id}')`:`doSubmit('${d.meta.id}')`}">${inTest?((window.__test.idx < window.__test.questions.length-1)?'Submit &amp; Next →':'Submit &amp; Finish'):'Submit'}</button>
           ${(ME&&ME.role!=='student')?`<button class="btn btn-ghost" onclick="viewSolution('${d.meta.id}')">Solution</button>`:''}
         </div>
         <div class="editor-wrap">
@@ -448,7 +452,6 @@ function renderFeedback(d,out){
     <div class="pane" id="fp2">${renderSolutions(fb.solutions, fb.timeComplexity, fb.spaceComplexity)}</div>
     <div class="pane" id="fp3">
       <div id="cxbox" class="cxbox"></div>
-      ${((fb.improve&&fb.improve.videos)||[]).map(v=>`<span class="chip">▶ ${esc(v)}</span>`).join('')}
       <p class="muted" style="margin-top:12px">${esc((fb.improve&&fb.improve.note)||'')}</p></div>
     <div class="pane" id="fp4"><div class="muted">Loading ranking…</div></div>`;
   document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{ document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
@@ -541,7 +544,7 @@ async function renderDashboard(){ stopTimer();
 async function renderLeaderboard(){ stopTimer();
   const d = await apiGet('/api/leaderboard'); lastLeaderboard = (d.top||[]);
   const rows = (d.top||[]).map((r,i)=>`<tr><td>${i+1}</td><td>${esc(r.name)}</td><td>${esc(r.batch)}</td><td>${r.xp}</td><td>${r.level}</td><td>${r.solved}</td><td>🔥 ${r.streak}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">No submissions yet.</td></tr>';
-  app.innerHTML = `<div style="display:flex;align-items:center;gap:12px"><h1 style="margin:0">Leaderboard</h1><span class="grow"></span><button class="btn btn-ghost" onclick="exportLeaderboard()">Export CSV</button></div><p class="muted">Top students by XP.</p>
+  app.innerHTML = `<div style="display:flex;align-items:center;gap:12px"><h1 style="margin:0">Leaderboard</h1><span class="grow"></span>${ME.role!=='student'?'<button class="btn btn-ghost" onclick="exportLeaderboard()">Export CSV</button>':''}</div><p class="muted">Top students by XP.</p>
     <div class="card"><table><tr><th>#</th><th>Student</th><th>Batch</th><th>XP</th><th>Level</th><th>Solved</th><th>Streak</th></tr>${rows}</table></div>`;
 }
 
@@ -668,9 +671,30 @@ document.addEventListener('keydown', (e)=>{
     ta.selectionStart=ta.selectionEnd=a+4;
   }
 });
+// Clicking the logo returns to the role's home (blocked mid-exam).
+function goHome(){ if(!ME) return; if(examMode){ toast('Please submit the test first'); return; } renderDashOrHome(); }
+
+// Global Back-button guard: keep one history entry pushed at all times so the
+// browser Back never leaves the SPA (which caused 404s). Back inside the app
+// returns to the role home; during an exam it is blocked and recorded.
+function globalPop(){
+  try{ history.pushState({tb:'app'}, ''); }catch(e){}
+  if(examMode){
+    if(examKind==='test'){ proctor.tab++; updateProctorBadge(); }
+    toast('⚠ The back button is disabled during the exam');
+    return;
+  }
+  if(ME) renderDashOrHome();
+}
+function installBackGuard(){
+  try{ history.replaceState({tb:'app'}, ''); history.pushState({tb:'app'}, ''); }catch(e){}
+  window.removeEventListener('popstate', globalPop);
+  window.addEventListener('popstate', globalPop);
+}
 (async function init(){
   const rm = (location.hash||'').match(/^#reset=([a-f0-9]+)/i);
   if(rm){ renderReset(rm[1]); return; }
+  installBackGuard();
   const me = await apiGet('/api/me');
   if(me.user){ ME = me.user; await boot(); } else { renderAuth('login'); }
 })();
@@ -1020,28 +1044,108 @@ async function submitTest(){
 async function renderStudentTests(){
   stopTimer();
   const list = await apiGet('/api/tests');
-  const rows = list.map(t=>`
-    <div class="card prow" onclick="openTest('${t.id}')">
+  const rows = list.map(t=>{
+    const badge = t.attemptStatus==='done' ? `<span class="pill pill-easy">✓ ${t.score}%</span>`
+      : (t.attemptStatus==='in_progress' ? '<span class="pill pill-medium">Resume</span>' : '');
+    return `<div class="card prow" onclick="openTest('${t.id}')">
       <div><div class="t">${esc(t.title)}</div>
         <div class="tags">${t.questionCount} question(s)${t.description?' · '+esc(t.description):''}</div></div>
-      <span class="grow"></span><button class="btn btn-ghost">Open →</button>
-    </div>`).join('') || '<p class="muted">No tests assigned to you yet. Try “All Problems” to practise freely.</p>';
-  app.innerHTML = `<h1>My Tests</h1><p class="muted">Tests your college has assigned to your batch.</p>
+      <span class="grow"></span>${badge}<button class="btn btn-ghost">${t.attemptStatus==='done'?'View →':'Open →'}</button>
+    </div>`;
+  }).join('') || '<p class="muted">No tests assigned to you yet. Try “All Problems” to practise freely.</p>';
+  app.innerHTML = `<div style="display:flex;align-items:center;gap:10px"><h1 style="margin:0">My Tests</h1><span class="grow"></span><button class="btn btn-ghost" onclick="renderMyResults()">📊 My Results</button></div>
+    <p class="muted">Tests your college assigned to your batch. Each test is one sitting — once submitted it can't be re-attempted.</p>
     <div class="plist" style="margin-top:14px">${rows}</div>`;
 }
+// A Test is one proctored sitting: questions come one at a time, no restart.
 async function openTest(id){
-  window.__examKind='test';                 // hardened lockdown + camera
-  window.__examBack=()=>openTest(id);
-  const t = await apiGet('/api/tests/'+id);
-  const rows = (t.questions||[]).map(q=>`
-    <div class="card prow" onclick="openExamProblem('${q.id}')">
-      <div><div class="t">${esc(q.title)}</div><div class="tags">${esc((q.tags||[]).join(' · '))}</div></div>
-      <span class="grow"></span><span class="pill ${pillClass(q.difficulty)}">${esc(q.difficulty)}</span>
-      <button class="btn btn-ghost">Solve →</button>
-    </div>`).join('') || '<p class="muted">This test has no questions yet.</p>';
-  app.innerHTML = `<div class="test-top"><button class="btn btn-ghost" onclick="renderStudentTests()">← My Tests</button></div>
-    <h1>${esc(t.title)}</h1>${t.description?`<p class="muted">${esc(t.description)}</p>`:''}
-    <div class="plist" style="margin-top:14px">${rows}</div>`;
+  stopTimer();
+  const { status, body } = await apiPost('/api/test/start', { testId:id });
+  if(status!==200){ toast(body.error||'Could not open test'); renderStudentTests(); return; }
+  if(body.status==='done'){ renderTestDone(body); return; }   // already submitted -> show score, no re-attempt
+  window.__examKind='test';
+  const answered=(body.answered||[]), qs=(body.questions||[]);
+  let idx=qs.findIndex(q=>!answered.includes(q.id)); if(idx<0) idx=0;
+  window.__test={ id, title:body.title, questions:qs, answered:answered.slice(), idx };
+  window.__examBack=()=>renderStudentTests();
+  renderExamGate(body.title);
+}
+function renderExamGate(title){
+  const isTest = (window.__examKind||'')==='test';
+  app.innerHTML=`<div class="examgate"><div class="examgate-card">
+    <div class="auth-logo"></div>
+    <h1 style="margin:12px 0 2px">Proctored Test</h1>
+    <p class="muted" style="margin:0">${esc(title||'')}</p>
+    <ul class="examrules">
+      <li>The test runs in <b>full screen</b>. Leaving full screen or this tab pauses the test and is recorded.</li>
+      ${isTest?'<li>Your <b>webcam</b> is monitored — keep your face visible and the camera uncovered.</li>':''}
+      ${isTest?'<li><b>Copy, paste, right-click and the back button are disabled.</b> Questions appear one at a time — you cannot go back.</li>':'<li>Do not switch tabs or exit full screen — each time is recorded.</li>'}
+      ${isTest?'<li>After <b>4 warnings the test is auto-submitted</b>, and it cannot be restarted.</li>':''}
+      <li>Submitting ends the test.</li>
+    </ul>
+    <div id="gate-err" class="err"></div>
+    <button class="btn btn-primary" onclick="beginExam()">${isTest?'Allow camera &amp; start':'Start in Full Screen'}</button>
+    <button class="btn btn-ghost" style="margin-left:8px" onclick="examCancel()">Cancel</button>
+  </div></div>`;
+}
+async function loadExamQuestion(){
+  const t=window.__test; if(!t) return;
+  const q=t.questions[t.idx]; if(!q) return finishTest(false);
+  let r=await fetch('/api/problems/'+q.id); if(!r.ok) r=await fetch('/api/challenge/'+q.id);
+  if(!r.ok){ toast('Problem not found'); return; }
+  const d=await r.json(); window.__examDetail=d; renderTest(d);
+}
+async function doExamSubmit(id){
+  const res=document.getElementById('results'); if(res) res.innerHTML='<div class="muted">Judging all tests…</div>';
+  window.__lastSubmit={ id, language:val('lang'), code:getCode() };
+  try{ localStorage.setItem('tb_code_'+id, getCode()); }catch(e){}
+  let resp;
+  try{ resp=await apiPost('/api/submit',{ problemId:id, language:val('lang'), code:getCode(), practice:false, testId:(window.__test&&window.__test.id)||'',
+    flags:{ tabSwitches:proctor.tab, pasteAttempts:proctor.paste, fullscreenExits:proctor.fs, copyBlocks:proctor.copy, cameraLost:proctor.cam } }); }
+  catch(e){ if(res) res.innerHTML='<div class="row"><span class="dot bad"></span>Network error — your code is safe. Please try Submit again.</div>'; return; }
+  const { status, body:out }=resp;
+  if(status===401){ alert('Please log in again.'); renderAuth('login'); return; }
+  if(!out || status>=500){ if(res) res.innerHTML='<div class="row"><span class="dot bad"></span>The judge could not process this. Your code is preserved — try again.</div>'; return; }
+  const t=window.__test; if(t && !t.answered.includes(id)) t.answered.push(id);
+  if(res) res.innerHTML=`<div class="row"><span class="dot ${out.overall==='Accepted'?'ok':'bad'}"></span><b>${esc(out.overall)}</b> — ${out.passed}/${out.total} tests</div>`;
+  if(!t) return;
+  if(t.idx < t.questions.length-1){ t.idx++; setTimeout(loadExamQuestion, 800); }
+  else setTimeout(()=>finishTest(false), 800);
+}
+async function finishTest(auto){
+  const t=window.__test; if(!t) return;
+  const testId=t.id, title=t.title;
+  stopExam(); window.__test=null; window.__examKind=null;
+  let body={};
+  try{ const r=await apiPost('/api/test/finish',{ testId }); body=r.body||{}; }catch(e){}
+  renderUserbar();
+  renderTestDone(Object.assign({ title }, body));
+  if(auto) toast('⚠ Test auto-submitted after too many warnings');
+}
+function renderTestDone(d){
+  stopTimer(); if(ME) renderUserbar();
+  const score=(d.score==null?0:d.score);
+  const answers=d.answers||{}; const qmap={}; (d.questions||[]).forEach(q=>qmap[q.id]=q.title);
+  const rows=Object.keys(answers).length
+    ? Object.entries(answers).map(([qid,s])=>`<tr><td>${esc(qmap[qid]||qid)}</td><td>${s}/100</td></tr>`).join('')
+    : '<tr><td colspan="2" class="muted">No questions were answered.</td></tr>';
+  app.innerHTML=`<div class="test-top"><button class="btn btn-ghost" onclick="renderStudentTests()">← My Tests</button>
+      <button class="btn btn-ghost" onclick="renderMyResults()">📊 My Results</button></div>
+    <div class="card" style="text-align:center;padding:26px">
+      <h1 style="margin:0">${esc(d.title||'Test')} — submitted</h1>
+      <p class="muted" style="margin-top:4px">This test has been submitted and cannot be re-attempted.</p>
+      <div style="font-size:52px;font-weight:800;margin:12px 0;color:#e8a33d">${score}%</div>
+      <table style="margin:6px auto 0;max-width:460px"><tr><th>Question</th><th>Best score</th></tr>${rows}</table>
+    </div>`;
+}
+async function renderMyResults(){
+  stopTimer();
+  const d = await apiGet('/api/my/test-results');
+  const rows=(d.results||[]).map(r=>`<tr><td>${esc(r.title)}</td><td>${r.status==='done'?('<b>'+r.score+'%</b>'):'<span class="muted">in progress</span>'}</td><td>${r.answered}/${r.total}</td><td>${r.submittedAt?new Date(r.submittedAt).toLocaleString():'—'}</td></tr>`).join('')
+    || '<tr><td colspan="4" class="muted">You haven\'t attempted any tests yet.</td></tr>';
+  app.innerHTML=`<div class="test-top"><button class="btn btn-ghost" onclick="renderStudentTests()">← My Tests</button></div>
+    <h1>My Test Results</h1><p class="muted">Scores from tests you have attempted.</p>
+    <div class="card"><table><tr><th>Test</th><th>Score</th><th>Answered</th><th>Submitted</th></tr>${rows}</table></div>`;
 }
 
 
@@ -1187,8 +1291,12 @@ function onProctorVis(){ if(!proctor.active) return;
   if(document.hidden){ proctor.tab++; updateProctorBadge(); if(examKind!=='test') toast('⚠ You left the test tab — this is recorded'); }
   else if(examMode && examKind==='test'){ showExamBlock('hidden'); } }
 function onProctorPaste(){ if(proctor.active){ proctor.paste++; updateProctorBadge(); if(examKind!=='test') toast('⚠ Pasting is recorded during a test'); } }
-function updateProctorBadge(){ const b=document.getElementById('proctor-badge'); if(!b) return;
-  const n=proctorCount(); b.textContent = n? ('⚠ Proctoring: '+n+' flag'+(n===1?'':'s')) : 'Proctoring: on';
+function updateProctorBadge(){
+  const n=proctorCount();
+  // Auto-submit a Test after 4 warnings (independent of whether the badge is visible).
+  if(examMode && examKind==='test' && window.__test && !window.__autoSubmitting && n>=4){ window.__autoSubmitting=true; finishTest(true); return; }
+  const b=document.getElementById('proctor-badge'); if(!b) return;
+  b.textContent = n? ('⚠ Warnings: '+n+' of 4') : 'Proctoring: on';
   b.style.color = n? '#b23b3b' : 'var(--muted)'; b.style.borderColor = n? '#f0bcbc' : 'var(--line)'; }
 function startProctor(){ proctor={tab:0,paste:0,fs:0,copy:0,cam:0,active:true};
   document.addEventListener('visibilitychange', onProctorVis);
@@ -1275,7 +1383,7 @@ async function openContest(id){
       <div class="card"><h2>Problems</h2><div class="plist">${probs}</div></div>
       <div class="card"><h2>Live standings</h2><table><tr><th>#</th><th>Name</th><th>Batch</th><th>Solved</th><th>Penalty</th></tr>${stand}</table>
         <button class="btn btn-ghost" style="margin-top:10px" onclick="openContest('${c.id}')">↻ Refresh</button>
-        <button class="btn btn-ghost" style="margin-top:10px" onclick="exportStandings()">Export CSV</button></div>
+        ${ME.role!=='student'?`<button class="btn btn-ghost" style="margin-top:10px" onclick="exportStandings()">Export CSV</button>`:''}</div>
     </div>`;
   function tick(){ const el=document.getElementById('ct-count'); if(!el){ if(contestTimer)clearInterval(contestTimer); return; }
     const now=Date.now(); let t,label;
@@ -1332,24 +1440,11 @@ async function renderReports(){ stopTimer();
 function examCancel(){ if(typeof window.__examBack==='function'){ try{ window.__examBack(); return; }catch(e){} } renderDashboard(); }
 async function openExamProblem(id){
   stopTimer();
+  window.__test=null;                                  // single-problem (contest) path
   let r=await fetch('/api/problems/'+id); if(!r.ok) r=await fetch('/api/challenge/'+id);
   if(!r.ok){ toast('Problem not found'); return; }
   const d=await r.json(); window.__examDetail=d;
-  const isTest = (window.__examKind||'')==='test';
-  app.innerHTML=`<div class="examgate"><div class="examgate-card">
-    <div class="auth-logo"></div>
-    <h1 style="margin:12px 0 2px">Proctored Test</h1>
-    <p class="muted" style="margin:0">${esc(d.meta.title)}</p>
-    <ul class="examrules">
-      <li>The test runs in <b>full screen</b>. Leaving full screen or this tab pauses the test and is recorded.</li>
-      ${isTest?'<li>Your <b>webcam</b> is monitored — periodic snapshots go to your admin. Keep your face visible and the camera uncovered.</li>':''}
-      ${isTest?'<li><b>Copy, paste, right-click and the back button are disabled</b> during the test.</li>':'<li>Do not switch tabs or exit full screen — each time is recorded.</li>'}
-      <li>Submitting ends the test.</li>
-    </ul>
-    <div id="gate-err" class="err"></div>
-    <button class="btn btn-primary" onclick="beginExam()">${isTest?'Allow camera &amp; start':'Start Test in Full Screen'}</button>
-    <button class="btn btn-ghost" style="margin-left:8px" onclick="examCancel()">Cancel</button>
-  </div></div>`;
+  renderExamGate(d.meta.title);
 }
 async function beginExam(){
   const el=document.documentElement;
@@ -1363,8 +1458,9 @@ async function beginExam(){
       try{ if(document.fullscreenElement && document.exitFullscreen) document.exitFullscreen(); }catch(_){}
       return; }
   }
+  window.__autoSubmitting=false;
   examMode=true; examKind=window.__examKind||'test';
-  renderTest(window.__examDetail);
+  if(window.__test){ await loadExamQuestion(); } else { renderTest(window.__examDetail); }
 }
 function startExam(){
   examSession=true;
@@ -1377,8 +1473,6 @@ function startExam(){
     document.addEventListener('paste', blockPaste, true);
     document.addEventListener('dragstart', preventSelect, true);
     document.addEventListener('keydown', blockKeys, true);
-    try{ history.pushState({tb:'exam'}, ''); }catch(e){}
-    window.addEventListener('popstate', onExamPop);
     startCam(false);
   }
 }
@@ -1393,7 +1487,6 @@ function stopExam(){
   document.removeEventListener('paste', blockPaste, true);
   document.removeEventListener('dragstart', preventSelect, true);
   document.removeEventListener('keydown', blockKeys, true);
-  window.removeEventListener('popstate', onExamPop);
   stopCam();
   const o=document.getElementById('exam-block'); if(o) o.remove();
   try{ if(document.fullscreenElement && document.exitFullscreen) document.exitFullscreen(); }catch(e){}
@@ -1412,8 +1505,6 @@ function blockKeys(e){ if(!examSession || examKind!=='test') return;
   if(ctrl && e.shiftKey && (k==='i'||k==='j'||k==='c')){ e.preventDefault(); return; }   // devtools
   if(ctrl && (k==='p'||k==='s'||k==='u')){ e.preventDefault(); return; }                 // print / save / view-source
 }
-function onExamPop(){ if(examSession && examKind==='test'){ try{ history.pushState({tb:'exam'}, ''); }catch(e){}
-  proctor.tab++; updateProctorBadge(); toast('⚠ The back button is disabled during the test — recorded'); } }
 
 // A full-screen overlay that blocks the test and forces the student to return.
 function showExamBlock(reason){

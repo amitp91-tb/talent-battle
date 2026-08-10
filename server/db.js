@@ -52,6 +52,10 @@ CREATE TABLE IF NOT EXISTS password_resets (
 CREATE TABLE IF NOT EXISTS proctor_shots (
   id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, problem_id TEXT, kind TEXT, file TEXT, at INTEGER
 );
+CREATE TABLE IF NOT EXISTS test_attempts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, test_id TEXT, status TEXT,
+  answers TEXT, score INTEGER, total INTEGER, started_at INTEGER, submitted_at INTEGER
+);
 `);
 
 // small JSON helpers for columns that hold arrays/objects

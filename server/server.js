@@ -23,6 +23,7 @@ const harnessGen = require('./harness-gen');
 const mailer = require('./mailer');
 const xlsx = require('./xlsx');
 const proctor = require('./proctor');
+const attempts = require('./attempts');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -241,6 +242,10 @@ async function handleApi(req, res, url) {
       auth.addSubmission({ userId: me.id, problemId: q.id, title: q.title, tags: q.tags,
         language: body.language, score: result.score, overall: result.overall, at: Date.now(),
         source: body.code || '', violations, runtimeMs, memoryKb: peakMemKb });
+      // If this submission is part of a Test sitting, record the question's best score.
+      if (body.testId) { const t = tests.getById(body.testId);
+        if (t && (t.batchIds.length === 0 || t.batchIds.includes(me.batchId)) && t.questionIds.includes(q.id))
+          attempts.recordAnswer(me.id, body.testId, q.id, result.score); }
       return sendJSON(res, 200, { ...result, feedback });
     }
     return sendJSON(res, 200, result);
@@ -361,8 +366,41 @@ async function handleApi(req, res, url) {
   if (req.method === 'GET' && url === '/api/tests') {
     const me = currentUser(req); if (!me) return sendJSON(res, 401, { error: 'login required' });
     const my = tests.forBatch(me.batchId || '');
-    return sendJSON(res, 200, my.map((t) => ({ id: t.id, title: t.title, description: t.description,
-      questionCount: t.questionIds.length })));
+    return sendJSON(res, 200, my.map((t) => { const a = attempts.get(me.id, t.id);
+      return { id: t.id, title: t.title, description: t.description, questionCount: t.questionIds.length,
+        attemptStatus: a ? a.status : 'none', score: (a && a.status === 'done') ? a.score : null }; }));
+  }
+  // ---- TEST SITTING: start (or resume; a completed test is not restartable) ----
+  if (req.method === 'POST' && url === '/api/test/start') {
+    const me = currentUser(req); if (!me) return sendJSON(res, 401, { error: 'login required' });
+    const b = await readBody(req);
+    const t = b.testId ? tests.getById(String(b.testId)) : null; if (!t) return sendJSON(res, 404, { error: 'unknown test' });
+    if (!(t.batchIds.length === 0 || t.batchIds.includes(me.batchId))) return sendJSON(res, 403, { error: 'not assigned to you' });
+    const questions = t.questionIds.map((qid) => store.getById(qid)).filter(Boolean)
+      .map((q) => ({ id: q.id, title: q.title, difficulty: q.difficulty, tags: q.tags }));
+    const existing = attempts.get(me.id, t.id);
+    if (existing && existing.status === 'done')
+      return sendJSON(res, 200, { status: 'done', score: existing.score, answers: existing.answers,
+        title: t.title, questions, submittedAt: existing.submittedAt });
+    const a = attempts.start(me.id, t.id, questions.length);
+    return sendJSON(res, 200, { status: 'in_progress', title: t.title, questions, answered: Object.keys(a.answers) });
+  }
+  // ---- TEST SITTING: finish (student submits the whole test, or auto-submit) ----
+  if (req.method === 'POST' && url === '/api/test/finish') {
+    const me = currentUser(req); if (!me) return sendJSON(res, 401, { error: 'login required' });
+    const b = await readBody(req);
+    const t = b.testId ? tests.getById(String(b.testId)) : null; if (!t) return sendJSON(res, 404, { error: 'unknown test' });
+    const a = attempts.finish(me.id, String(b.testId));
+    return sendJSON(res, 200, { status: 'done', score: a ? a.score : 0, answers: a ? a.answers : {}, title: t.title });
+  }
+  // ---- STUDENT: my past test results (scores) ----
+  if (req.method === 'GET' && url === '/api/my/test-results') {
+    const me = currentUser(req); if (!me) return sendJSON(res, 401, { error: 'login required' });
+    const list = attempts.listForUser(me.id).map((a) => { const t = tests.getById(a.testId);
+      return { testId: a.testId, title: t ? t.title : '(deleted test)', status: a.status,
+        score: a.status === 'done' ? a.score : null, total: a.total, answered: Object.keys(a.answers).length,
+        startedAt: a.startedAt, submittedAt: a.submittedAt }; });
+    return sendJSON(res, 200, { results: list });
   }
   // ---- 100 DAYS OF CODE ----
   if (req.method === 'GET' && url === '/api/challenge') {
@@ -838,7 +876,7 @@ function buildFeedback2(q, result) {
   const solutions = (q.solutions && Object.keys(q.solutions).length) ? q.solutions : (q.reference ? { python: q.reference } : {});
   return { summary, failedCount: failed.length, referenceSolution: q.reference || '(no reference provided)',
     solutions, timeComplexity: q.timeComplexity || '', spaceComplexity: q.spaceComplexity || '',
-    improve: { videos: (q.tags || []).slice(0, 2).map((t) => `Video: ${t} — core concepts`), note: 'Re-attempt after reviewing the solution.' } };
+    improve: { note: 'Re-attempt after reviewing the solution.' } };
 }
 
 const server = http.createServer((req, res) => {

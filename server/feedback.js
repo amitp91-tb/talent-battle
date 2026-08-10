@@ -32,7 +32,6 @@ function buildFeedback(problemDir, meta, result) {
     failedCount: failed.length,
     referenceSolution,
     improve: {
-      videos: (meta.tags || []).slice(0, 2).map((t) => `Video: ${t} — core concepts`),
       note: 'Re-attempt after reviewing the solution to lock in the concept.',
     },
   };
