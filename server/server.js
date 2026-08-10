@@ -312,6 +312,14 @@ async function handleApi(req, res, url) {
   if (req.method === 'GET' && solm) {
     const me = currentUser(req); if (!me) return sendJSON(res, 401, { error: 'login required' });
     const q = findProblem(solm[1]); if (!q) return sendJSON(res, 404, { error: 'not found' });
+    // Integrity gate: never hand a student the model solution while a contest that
+    // includes this problem (and is assigned to their batch) is currently running.
+    if (me.role === 'student') {
+      const liveContest = contests.list().some((c) => contests.status(c) === 'running'
+        && (c.problemIds || []).includes(solm[1])
+        && (c.batchIds.length === 0 || c.batchIds.includes(me.batchId)));
+      if (liveContest) return sendJSON(res, 403, { error: 'The solution is locked while a live contest using this problem is in progress. It unlocks after the contest ends.' });
+    }
     const attempted = auth.userSubmissions(me.id).some((x) => x.problemId === solm[1]);
     if (!attempted && me.role === 'student') return sendJSON(res, 403, { error: 'Submit at least once to unlock the solution.' });
     const solutions = (q.solutions && Object.keys(q.solutions).length) ? q.solutions : (q.reference ? { python: q.reference } : {});
