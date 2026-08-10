@@ -526,6 +526,7 @@ function copyRef(){ const t=document.getElementById('refcode').innerText; naviga
 
 // ---------- STUDENT DASHBOARD ----------
 async function renderDashboard(){ stopTimer();
+  const f = ME.features||{}, on=(k)=> f[k]!==false;   // per-batch module toggles
   const [d, ch, g] = await Promise.all([apiGet('/api/dashboard'), apiGet('/api/challenge').catch(()=>({days:[]})), apiGet('/api/gamify').catch(()=>({}))]);
   const daysSolved = (ch.days||[]).filter(x=>x.solved).length;
   const rows = Object.entries(d.problems||{}).map(([id,x])=>`
@@ -534,7 +535,7 @@ async function renderDashboard(){ stopTimer();
   const st=(v,l)=>`<div class="statcard" style="cursor:default"><div class="statval">${v}</div><div class="statlabel">${l}</div></div>`;
   const xp=g.xp||0, level=g.level||1, xpToNext=(g.xpToNext==null?100:g.xpToNext);
   const badges=(g.badges||[]).map(b=>`<span class="chip">${b.icon} ${esc(b.name)}</span>`).join('') || '<span class="muted">Solve problems to earn badges.</span>';
-  const daily = g.daily? `<div class="card prow" onclick="openChallenge('${g.daily.id}')" style="margin-bottom:14px">
+  const daily = (on('challenge') && g.daily)? `<div class="card prow" onclick="openChallenge('${g.daily.id}')" style="margin-bottom:14px">
       <div><div class="t">🌟 Daily Challenge — ${esc(g.daily.title)}</div><div class="tags">Today's pick — solve it to keep your streak</div></div>
       <span class="grow"></span><span class="pill ${pillClass(g.daily.difficulty)}">${esc(g.daily.difficulty)}</span><button class="btn btn-primary">Solve →</button></div>` : '';
   app.innerHTML = `
@@ -547,16 +548,16 @@ async function renderDashboard(){ stopTimer();
     <div class="statgrid">
       ${st(d.solved||0,'Problems solved')}
       ${st(xp,'XP')}
-      ${st('#'+(g.rank||'—'),'Leaderboard rank')}
-      ${st(daysSolved+' / 100','100 Days progress')}
+      ${on('leaderboard')?st('#'+(g.rank||'—'),'Leaderboard rank'):''}
+      ${on('challenge')?st(daysSolved+' / 100','100 Days progress'):''}
     </div>
     ${daily}
     <div class="card" style="margin:14px 0"><h2>Badges</h2><div class="qa">${badges}</div></div>
     <div class="qa" style="margin:16px 0">
-      <button class="btn btn-primary" onclick="renderStudentTests()">My Tests</button>
-      <button class="btn btn-ghost" onclick="renderChallenge()">100 Days</button>
-      <button class="btn btn-ghost" onclick="renderLeaderboard()">Leaderboard</button>
-      <button class="btn btn-ghost" onclick="renderList()">All Problems</button>
+      ${on('tests')?'<button class="btn btn-primary" onclick="renderStudentTests()">My Tests</button>':''}
+      ${on('challenge')?'<button class="btn btn-ghost" onclick="renderChallenge()">100 Days</button>':''}
+      ${on('leaderboard')?'<button class="btn btn-ghost" onclick="renderLeaderboard()">Leaderboard</button>':''}
+      ${on('problems')?'<button class="btn btn-ghost" onclick="renderList()">All Problems</button>':''}
     </div>
     <div class="card"><h2>Best score per problem</h2>${rows}</div>`;
 }
