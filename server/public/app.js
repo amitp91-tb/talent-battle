@@ -1,7 +1,11 @@
 // app.js — single-page app with login accounts (students + faculty).
 const app = document.getElementById('app');
 const userbar = document.getElementById('userbar');
-let ME = null, LANGS = { available:{}, labels:{} }, PROBLEMS = [], timer = null, contestTimer = null, examMode = false, examSession = false, examKind = null, cam = null, advancing = false;
+let ME = null, LANGS = { available:{}, labels:{} }, PROBLEMS = [], timer = null, contestTimer = null, examMode = false, examSession = false, examKind = null, cam = null, advancing = false, curLang = null, langCode = {};
+// Saved-code key is per USER + problem + language, so a shared/lab computer never
+// shows one student's code to the next, and each language keeps its own code.
+function codeKey(id, lang){ return 'tb_code_' + ((ME && ME.id) || 'anon') + '_' + id + '_' + lang; }
+function clearSavedCode(){ try{ Object.keys(localStorage).filter(k=>k.indexOf('tb_code_')===0).forEach(k=>localStorage.removeItem(k)); }catch(e){} }
 
 const starters = {
   python: "# Read all input, then print your answer.\nimport sys\ndata = sys.stdin.read().split()\n\n# TODO: compute the answer from `data`\nprint(\"your answer here\")",
@@ -112,15 +116,16 @@ function val(id){ const el=document.getElementById(id); return el?el.value:''; }
 async function doLogin(){
   const { status, body } = await apiPost('/api/login', { email:val('email'), password:val('password') });
   if(status!==200){ document.getElementById('autherr').textContent = body.error||'Login failed'; return; }
+  clearSavedCode();   // wipe any leftover code from a previous user on this (possibly shared) computer
   ME = body.user; await boot();
 }
 async function doRegister(){
   const { status, body } = await apiPost('/api/register', { role:val('role'), name:val('name'), email:val('email'),
     password:val('password'), mobile:val('mobile'), college:val('college'), branch:val('branch'), yearOfPassing:val('yearOfPassing') });
   if(status!==200){ document.getElementById('autherr').textContent = body.error||'Could not create account'; return; }
-  ME = body.user; await boot();
+  clearSavedCode(); ME = body.user; await boot();
 }
-async function doLogout(){ await apiPost('/api/logout', {}); ME=null; stopTimer(); renderAuth('login'); }
+async function doLogout(){ await apiPost('/api/logout', {}); clearSavedCode(); ME=null; stopTimer(); renderAuth('login'); }
 function renderDashOrHome(){ if(ME.role==='admin') renderAdminHome(); else if(ME.role==='subadmin') renderFaculty(); else renderDashboard(); }
 
 // ---- My Profile (view account details) ----
@@ -352,9 +357,13 @@ function renderTest(d){
     </div>`;
   document.getElementById('lang').value = startLang;
   const ef=document.getElementById('editor-file'); if(ef) ef.textContent = fileFor[startLang]||'main';
-  mountEditor(starterFor(startLang), startLang);
-  // Restore any previously written code for this problem so a reload/re-attempt never loses work (#3).
-  try{ const saved=localStorage.getItem('tb_code_'+(d.meta&&d.meta.id)); if(saved && saved.trim()) setCode(saved); }catch(e){}
+  // Fresh per-language memory for this problem. Restore only THIS user's own saved
+  // code for this problem+language (never another student's) so a reload never loses work (#3).
+  curLang = startLang; langCode = {};
+  let initial = starterFor(startLang);
+  try{ const saved=localStorage.getItem(codeKey(d.meta.id, startLang)); if(saved!=null && saved.trim()) initial=saved; }catch(e){}
+  langCode[startLang]=initial;
+  mountEditor(initial, startLang);
   startTimer(); if(!advancing) startProctor(); updateProctorBadge();
   if(examMode) startExam();
   advancing=false;   // the next-question render is complete; future renders may tear down normally
@@ -380,13 +389,23 @@ function renderSolutions(solutions, tc, sc){
   return h;
 }
 const fileFor={python:'main.py',cpp:'main.cpp',c:'main.c',java:'Main.java',javascript:'main.js',bash:'main.sh',go:'main.go',ruby:'main.rb',php:'main.php',rust:'main.rs'};
-function onLangChange(){ const k=document.getElementById('lang').value;
-  const cur=getCode().trim();
-  const known=Object.values(starters).map(x=>String(x).trim());
-  if(curProblem&&curProblem.starters) known.push(...Object.values(curProblem.starters).map(x=>String(x).trim()));
-  if(known.includes(cur)||cur==='') setCode(starterFor(k));
+function onLangChange(){
+  const k=document.getElementById('lang').value;
+  const id = curProblem && curProblem.meta && curProblem.meta.id;
+  // Keep what the student wrote under the PREVIOUS language, then show this language's
+  // own code (or its starter) — so switching Java→Python no longer shows the Java code.
+  if(curLang && curLang!==k){
+    const cur=getCode(); langCode[curLang]=cur;
+    if(id) try{ localStorage.setItem(codeKey(id,curLang),cur); }catch(e){}
+  }
+  curLang=k;
+  let next = (langCode[k]!=null)?langCode[k]:null;
+  if(next==null && id){ try{ const s=localStorage.getItem(codeKey(id,k)); if(s!=null && s.trim()) next=s; }catch(e){} }
+  if(next==null) next=starterFor(k);
+  setCode(next); langCode[k]=next;
   setEditorLang(k);
-  const ef=document.getElementById('editor-file'); if(ef) ef.textContent=fileFor[k]||'main'; }
+  const ef=document.getElementById('editor-file'); if(ef) ef.textContent=fileFor[k]||'main';
+}
 function startTimer(){
   // A Test with a time limit counts down to a fixed server deadline (so it can't
   // be reset by re-opening, and it spans all questions). Otherwise a plain 30:00.
@@ -437,7 +456,7 @@ async function doRun(id){ const res=document.getElementById('results'); res.inne
 
 async function doSubmit(id){ const res=document.getElementById('results'); res.innerHTML='<div class="muted">Judging all tests…</div>';
   window.__lastSubmit = { id, language: val('lang'), code: getCode() };   // for the complexity analysis card
-  try{ localStorage.setItem('tb_code_'+id, getCode()); }catch(e){}   // preserve work so it is never lost (#3)
+  try{ localStorage.setItem(codeKey(id, curLang||val('lang')), getCode()); }catch(e){}   // preserve work so it is never lost (#3)
   let resp;
   try{ resp = await apiPost('/api/submit',{ problemId:id, language:val('lang'), code:getCode(), practice: !examMode,
     flags:{ tabSwitches:proctor.tab, pasteAttempts:proctor.paste, fullscreenExits:proctor.fs, copyBlocks:proctor.copy, cameraLost:proctor.cam } }); }
@@ -1223,7 +1242,7 @@ async function loadExamQuestion(){
 async function doExamSubmit(id){
   const res=document.getElementById('results'); if(res) res.innerHTML='<div class="muted">Judging all tests…</div>';
   window.__lastSubmit={ id, language:val('lang'), code:getCode() };
-  try{ localStorage.setItem('tb_code_'+id, getCode()); }catch(e){}
+  try{ localStorage.setItem(codeKey(id, curLang||val('lang')), getCode()); }catch(e){}
   let resp;
   try{ resp=await apiPost('/api/submit',{ problemId:id, language:val('lang'), code:getCode(), practice:false, testId:(window.__test&&window.__test.id)||'',
     flags:{ tabSwitches:proctor.tab, pasteAttempts:proctor.paste, fullscreenExits:proctor.fs, copyBlocks:proctor.copy, cameraLost:proctor.cam } }); }
