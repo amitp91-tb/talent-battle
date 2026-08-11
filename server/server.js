@@ -25,8 +25,12 @@ const xlsx = require('./xlsx');
 const proctor = require('./proctor');
 const attempts = require('./attempts');
 
+const os = require('os');
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
+// Lightweight live-load tracking (for /api/metrics during a big test).
+let recentJudge = [];   // timestamps of judge jobs completed in the last minute
+let overloadCount = 0;  // times the judge queue was full and a submission was rejected
 const UPLOADS = path.join(process.env.TB_DATA || path.join(__dirname, 'data'), 'uploads');
 try { if (!fs.existsSync(UPLOADS)) fs.mkdirSync(UPLOADS, { recursive: true }); } catch (e) {}
 
@@ -201,6 +205,26 @@ async function handleApi(req, res, url) {
     catch (e) { return sendJSON(res, 400, { error: e.message }); }
   }
 
+  // ---- LIVE METRICS (staff, or ?token=TB_METRICS_TOKEN) — watch load during a big test ----
+  if (req.method === 'GET' && url === '/api/metrics') {
+    let token = null; try { token = new URL(req.url, 'http://x').searchParams.get('token'); } catch (e) {}
+    const me = currentUser(req);
+    const okAuth = isStaff(me) || (process.env.TB_METRICS_TOKEN && token === process.env.TB_METRICS_TOKEN);
+    if (!okAuth) return sendJSON(res, 403, { error: 'forbidden' });
+    const now = Date.now(); recentJudge = recentJudge.filter((t) => now - t < 60000);
+    const mem = process.memoryUsage();
+    return sendJSON(res, 200, {
+      at: now,
+      queue: jobQueue.stats(),                                  // { active, queued, max, maxQueue }
+      judgePerMin: recentJudge.length,                          // judge jobs finished in the last 60s
+      overloadRejections: overloadCount,                        // cumulative "server busy" rejections
+      loadavg: os.loadavg().map((x) => Math.round(x * 100) / 100),
+      cpus: os.cpus().length,
+      memMB: { rss: Math.round(mem.rss / 1048576), sysFreeMB: Math.round(os.freemem() / 1048576), sysTotalMB: Math.round(os.totalmem() / 1048576) },
+      uptimeSec: Math.round(process.uptime()),
+    });
+  }
+
   // ---- PUBLIC READ ----
   if (req.method === 'GET' && url === '/api/languages') {
     return sendJSON(res, 200, { available: AVAILABLE,
@@ -248,9 +272,10 @@ async function handleApi(req, res, url) {
         timeLimitMs: q.timeLimitMs, memoryMb: q.memoryMb, checker: q.checker, floatTolerance: q.floatTolerance,
         // Only reveal hidden-case details in practice mode (never during a proctored exam/contest).
         revealHidden: isSubmit && body.practice === true }));
+      recentJudge.push(Date.now());   // throughput metric
     } catch (e) {
-      if (e && e.overloaded) return sendJSON(res, 503, { overall: 'Server busy', passed: 0, total: 0,
-        results: [], note: 'The judge is busy right now — please try again in a few seconds.' });
+      if (e && e.overloaded) { overloadCount++; return sendJSON(res, 503, { overall: 'Server busy', passed: 0, total: 0,
+        results: [], note: 'The judge is busy right now — please try again in a few seconds.' }); }
       throw e;
     }
     if (isSubmit) {
