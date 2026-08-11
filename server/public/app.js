@@ -561,7 +561,23 @@ async function renderDashboard(){ stopTimer();
   const daily = (on('challenge') && g.daily)? `<div class="card prow" onclick="openChallenge('${g.daily.id}')" style="margin-bottom:14px">
       <div><div class="t">🌟 Daily Challenge — ${esc(g.daily.title)}</div><div class="tags">Today's pick — solve it to keep your streak</div></div>
       <span class="grow"></span><span class="pill ${pillClass(g.daily.difficulty)}">${esc(g.daily.difficulty)}</span><button class="btn btn-primary">Solve →</button></div>` : '';
+  // Getting-started guide — steps adapt to which modules this batch has enabled.
+  const steps=[];
+  if(on('tests')) steps.push(['Take your Tests','Open <b>My Tests</b> and start an assigned test. Questions appear one at a time and each test is a single timed sitting.']);
+  steps.push(['Write, Run &amp; Submit','Pick your language and write your solution. Press <b>▷ Run</b> to check the sample, then <b>Submit</b> to grade it against every test case.']);
+  const practice=[on('challenge')?'<b>100 Days of Code</b>':'', on('problems')?'<b>All Problems</b>':''].filter(Boolean).join(' and ');
+  if(practice) steps.push(['Practice anytime',`Sharpen your skills in ${practice} — solve freely, no time pressure.`]);
+  if(on('tests')) steps.push(['Check your scores','Your results for completed tests are saved under <b>My Results</b> so you can review them anytime.']);
+  const guide=`<div class="guide">
+    <h2>👋 Getting started</h2>
+    <p class="muted" style="margin:3px 0 0">A quick guide to using Talent Battle.</p>
+    <div class="guide-steps">
+      ${steps.map((s,i)=>`<div class="guide-step"><div class="guide-num">${i+1}</div><div><div class="st">${s[0]}</div><div class="sd">${s[1]}</div></div></div>`).join('')}
+    </div>
+    ${on('tests')?`<div class="guide-note">🔒 <b>During a proctored test:</b> allow your camera, stay in full screen, keep your face visible, and don't switch tabs or copy/paste. After <b>4 warnings the test submits automatically</b> — so stay focused and finish calmly. Whatever you've submitted is saved.</div>`:''}
+  </div>`;
   app.innerHTML = `
+    ${guide}
     <div class="hero">
       <div><h1 style="margin:0">Hi ${esc(ME.name.split(' ')[0])} 👋</h1>
         <p class="muted" style="margin:4px 0 0">Level ${level} · ${xp} XP · ${xpToNext} XP to next level</p>

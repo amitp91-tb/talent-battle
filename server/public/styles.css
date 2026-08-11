@@ -258,3 +258,81 @@ code{ background:#f4f0e6; padding:1px 5px; border-radius:5px; font-family:ui-mon
 .examgate{ min-height:62vh; display:flex; align-items:center; justify-content:center; }
 .examgate-card{ background:#fff; border:1px solid var(--line); border-radius:16px; padding:30px; max-width:470px; text-align:center; box-shadow:0 12px 44px rgba(60,45,15,.12); }
 .examrules{ text-align:left; font-size:13px; color:#4a463d; margin:14px auto 20px; line-height:1.7; max-width:360px; }
+
+/* ===================== POLISH v3 — premium light ===================== */
+:root{
+  --gold:#b8860b; --gold2:#9a7209; --gold-soft:#d8a93a;
+  --ink:#211d16; --muted:#8a8272; --line:#ece7db; --bg:#f7f5ef; --panel:#ffffff;
+}
+body{
+  background:
+    radial-gradient(1000px 520px at 88% -10%, #fff4d6 0%, rgba(255,244,214,0) 55%),
+    linear-gradient(180deg,#faf8f2 0%, #f4f1e8 100%);
+  color:var(--ink); -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+}
+main{ max-width:1080px; padding:28px 22px 64px; }
+
+/* typography */
+h1{ font-size:25px; font-weight:800; letter-spacing:-.022em; color:#1b1810; }
+h2{ font-size:16px; font-weight:700; letter-spacing:-.01em; }
+.muted{ color:var(--muted); }
+
+/* header — clean, floating, glassy */
+header{ padding:13px 26px; background:rgba(255,255,255,.82); backdrop-filter:blur(10px) saturate(1.15);
+  border-bottom:1px solid rgba(90,70,20,.08); box-shadow:0 1px 24px rgba(90,70,20,.05); }
+.brand{ font-weight:800; font-size:17px; }
+.logo{ width:25px; height:25px; border-radius:8px; background:linear-gradient(135deg,var(--gold-soft),var(--gold));
+  box-shadow:0 3px 9px rgba(184,134,11,.4); }
+nav{ background:#f0ebde; padding:4px; border-radius:13px; }
+nav button{ font-weight:600; font-size:12.5px; color:#6f6856; padding:7px 13px; border-radius:9px; }
+nav button:hover, nav button.active{ background:#fff; color:var(--ink); box-shadow:0 1px 5px rgba(0,0,0,.07); }
+#userbar .who{ font-weight:600; color:#6f6856; }
+
+/* cards — airier, softer layered shadow */
+.card{ border-radius:16px; border:1px solid var(--line); padding:20px;
+  box-shadow:0 1px 2px rgba(50,40,15,.03), 0 14px 34px -18px rgba(50,40,15,.16); }
+
+/* buttons — refined */
+.btn{ font-weight:600; border-radius:11px; padding:9px 17px; }
+.btn-primary{ background:linear-gradient(135deg,#cf9c2c,var(--gold)); color:#fff; box-shadow:0 3px 11px rgba(184,134,11,.30); }
+.btn-primary:hover{ background:linear-gradient(135deg,#c2901f,var(--gold2)); box-shadow:0 6px 18px rgba(184,134,11,.38); }
+.btn-ghost{ background:#fff; border:1px solid var(--line); color:#403a2e; }
+.btn-ghost:hover{ background:#faf7f0; border-color:#e3dbc7; }
+
+/* stat cards */
+.statcard{ border-radius:16px; padding:20px;
+  box-shadow:0 1px 2px rgba(50,40,15,.03), 0 12px 30px -18px rgba(50,40,15,.18); }
+.statval{ font-size:30px; letter-spacing:-.02em; }
+.statcard:hover{ transform:translateY(-3px); border-color:#e6cf92; box-shadow:0 14px 30px -14px rgba(184,134,11,.22); }
+
+/* hero — elegant */
+.hero{ border-radius:20px; padding:26px 30px; background:linear-gradient(120deg,#fffaf0 0%,#fdefd1 100%);
+  border:1px solid #efdcac; box-shadow:0 16px 40px -20px rgba(184,134,11,.30); }
+.hero h1{ font-size:26px; }
+
+/* list rows lift */
+.prow{ border-radius:14px; }
+.prow:hover{ transform:translateY(-1px); box-shadow:0 8px 22px -12px rgba(50,40,15,.22); }
+
+/* inputs */
+.field input,.field select,.filters input,.filters select,select,textarea,input{ border-radius:11px; }
+
+/* hub cards */
+.hubcard{ border-radius:16px; box-shadow:0 1px 2px rgba(50,40,15,.03), 0 14px 34px -18px rgba(50,40,15,.16); }
+
+/* ---- Getting-started guide (student dashboard) ---- */
+.guide{ background:linear-gradient(135deg,#ffffff,#fffdf7);
+  border:1px solid var(--line); border-radius:20px; padding:22px 26px; margin-bottom:18px;
+  box-shadow:0 16px 40px -22px rgba(50,40,15,.22); }
+.guide h2{ display:flex; align-items:center; gap:9px; margin:0; font-size:18px; }
+.guide-steps{ display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:16px 20px; margin-top:18px; }
+.guide-step{ display:flex; gap:13px; align-items:flex-start; }
+.guide-num{ flex:none; width:32px; height:32px; border-radius:11px; display:flex; align-items:center; justify-content:center;
+  font-weight:800; font-size:14px; color:#fff; background:linear-gradient(135deg,var(--gold-soft),var(--gold));
+  box-shadow:0 4px 10px rgba(184,134,11,.32); }
+.guide-step .st{ font-weight:700; font-size:14px; margin-bottom:3px; letter-spacing:-.01em; }
+.guide-step .sd{ font-size:12.5px; color:var(--muted); line-height:1.55; }
+.guide-note{ margin-top:18px; font-size:12.5px; color:#7a5f12; line-height:1.6;
+  background:#fff7e6; border:1px solid #ecd9a7; border-radius:13px; padding:12px 16px; }
+
+@media(max-width:720px){ main{ padding:20px 15px 48px; } .hero{ padding:20px; } h1{ font-size:22px; } }
