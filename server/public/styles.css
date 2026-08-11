@@ -336,3 +336,76 @@ nav button:hover, nav button.active{ background:#fff; color:var(--ink); box-shad
   background:#fff7e6; border:1px solid #ecd9a7; border-radius:13px; padding:12px 16px; }
 
 @media(max-width:720px){ main{ padding:20px 15px 48px; } .hero{ padding:20px; } h1{ font-size:22px; } }
+
+/* ===================== POLISH v4 — cool modern SaaS (slate + indigo) ===================== */
+:root{
+  --gold:#4f46e5; --gold2:#4338ca; --gold-soft:#6366f1;   /* accent is now indigo */
+  --ink:#1e293b; --muted:#64748b; --line:#e6e9f0; --bg:#f6f8fb; --panel:#ffffff;
+}
+body{
+  background:
+    radial-gradient(1000px 520px at 88% -10%, #eef1ff 0%, rgba(238,241,255,0) 55%),
+    linear-gradient(180deg,#f8fafc 0%, #eef2f7 100%);
+  color:var(--ink);
+}
+h1{ color:#0f172a; }
+
+/* header */
+header{ background:rgba(255,255,255,.85); border-bottom:1px solid #e7eaf1; box-shadow:0 1px 22px rgba(30,41,59,.05); }
+.logo{ background:linear-gradient(135deg,#818cf8,#4f46e5); box-shadow:0 3px 10px rgba(79,70,229,.42); }
+nav{ background:#eef1f6; }
+nav button{ color:#64748b; }
+nav button:hover, nav button.active{ background:#fff; color:#1e293b; box-shadow:0 1px 5px rgba(30,41,59,.09); }
+#userbar .who{ color:#64748b; }
+
+/* cards + cool-tinted shadows */
+.card{ box-shadow:0 1px 2px rgba(30,41,59,.04), 0 14px 34px -18px rgba(30,41,59,.16); }
+.statcard{ box-shadow:0 1px 2px rgba(30,41,59,.04), 0 12px 30px -18px rgba(30,41,59,.18); }
+.statcard:hover{ border-color:#c9ccf7; box-shadow:0 14px 30px -14px rgba(79,70,229,.22); }
+.hubcard{ box-shadow:0 1px 2px rgba(30,41,59,.04), 0 14px 34px -18px rgba(30,41,59,.16); }
+.hubcard:hover{ box-shadow:0 14px 30px -14px rgba(79,70,229,.18); }
+.prow:hover{ box-shadow:0 8px 22px -12px rgba(30,41,59,.20); }
+
+/* buttons — indigo */
+.btn-primary{ background:linear-gradient(135deg,#6366f1,#4f46e5); box-shadow:0 3px 11px rgba(79,70,229,.30); }
+.btn-primary:hover{ background:linear-gradient(135deg,#5b57ee,#4338ca); box-shadow:0 6px 18px rgba(79,70,229,.40); }
+.btn-ghost{ background:#fff; border:1px solid var(--line); color:#334155; }
+.btn-ghost:hover{ background:#f8fafc; border-color:#d6dbe6; }
+
+/* indigo focus rings */
+.field input:focus,.field select:focus,.filters input:focus,.filters select:focus,select:focus,textarea:focus,input:focus{
+  border-color:#6366f1; box-shadow:0 0 0 3px rgba(99,102,241,.18); }
+
+/* auth */
+.authwrap{ box-shadow:0 10px 40px rgba(30,41,59,.10); }
+.auth-logo{ background:linear-gradient(135deg,#818cf8,#4f46e5); box-shadow:0 4px 14px rgba(79,70,229,.35); }
+.authtabs button.active{ background:linear-gradient(135deg,#6366f1,#4f46e5); border-color:#4f46e5; }
+
+/* hero — cool */
+.hero{ background:linear-gradient(120deg,#f4f6ff,#eaeefe); border:1px solid #dfe4fb; box-shadow:0 16px 40px -20px rgba(79,70,229,.20); }
+
+/* progress + tracks (indigo on cool track) */
+.track{ background:#e4e8f1; } .track i{ background:var(--gold); }
+.progress-bar{ background:#e4e8f1; } .progress-bar i{ background:linear-gradient(90deg,#6366f1,#818cf8); }
+
+/* tabs */
+.tab.active{ color:#1e293b; border-bottom-color:#4f46e5; }
+
+/* neutral surfaces (cool grays) */
+.io{ background:#f1f5f9; border-color:#e2e8f0; }
+code, .cxbadge{ background:#eef1f6; border-color:#e2e8f0; }
+.day.locked{ background:#eef1f6; }
+tbody tr:hover td, table tr:hover td{ background:#f8fafc; }
+
+/* timer / banner / proctor — indigo-tinted */
+.timer{ background:#eef2ff; border:1px solid #d6dcfb; color:#3730a3; }
+.banner{ background:#eff2ff; border:1px solid #dfe3fb; color:#3730a3; }
+.proctor{ background:#fff; border:1px solid var(--line); color:#64748b; }
+
+/* getting-started guide — cool */
+.guide{ background:linear-gradient(135deg,#ffffff,#f6f8ff); border:1px solid #e7eaf3; box-shadow:0 16px 40px -22px rgba(30,41,59,.20); }
+.guide-num{ background:linear-gradient(135deg,#818cf8,#4f46e5); box-shadow:0 4px 10px rgba(79,70,229,.32); }
+.guide-note{ color:#3730a3; background:#eef2ff; border:1px solid #dfe4fb; }
+
+/* exam gate */
+.examgate-card{ box-shadow:0 12px 44px rgba(30,41,59,.16); }
