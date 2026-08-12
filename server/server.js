@@ -430,13 +430,14 @@ async function handleApi(req, res, url) {
     const b = await readBody(req);
     const t = b.testId ? tests.getById(String(b.testId)) : null; if (!t) return sendJSON(res, 404, { error: 'unknown test' });
     if (!(t.batchIds.length === 0 || t.batchIds.includes(me.batchId))) return sendJSON(res, 403, { error: 'not assigned to you' });
+    const marksMax = tests.marksMax(t);
     const questions = t.questionIds.map((qid) => store.getById(qid)).filter(Boolean)
-      .map((q) => ({ id: q.id, title: q.title, difficulty: q.difficulty, tags: q.tags }));
+      .map((q) => ({ id: q.id, title: q.title, difficulty: q.difficulty, tags: q.tags, marks: t.marks[q.id] || null }));
     const reveal = { showScore: !!t.showScore, showAnswers: !!t.showAnswers, showSolutions: !!t.showSolutions };
     const existing = attempts.get(me.id, t.id);
     if (existing && existing.status === 'done')
       return sendJSON(res, 200, { status: 'done', score: existing.score, answers: existing.answers,
-        title: t.title, questions, reveal, submittedAt: existing.submittedAt });
+        title: t.title, questions, reveal, marks: t.marks, marksMax, marksEarned: attempts.marksEarned(existing.answers, t.marks), submittedAt: existing.submittedAt });
     // Enforce the availability window for a NEW start (a resume/completed view is always allowed).
     if (!existing) { const w = tests.windowStatus(t);
       if (w.state === 'upcoming') return sendJSON(res, 403, { error: 'This test has not started yet. It opens at ' + new Date(w.opensAt).toLocaleString() + '.' });
@@ -447,20 +448,22 @@ async function handleApi(req, res, url) {
     const deadline = durationMin > 0 ? (a.startedAt + durationMin * 60000) : 0;
     // Time is up on re-open: finish and show the score (no fresh timer on restart).
     if (deadline && Date.now() >= deadline) {
-      const done = attempts.finish(me.id, t.id);
-      return sendJSON(res, 200, { status: 'done', score: done ? done.score : 0, answers: done ? done.answers : {}, title: t.title, questions, reveal });
+      const done = attempts.finish(me.id, t.id, t.marks);
+      return sendJSON(res, 200, { status: 'done', score: done ? done.score : 0, answers: done ? done.answers : {}, title: t.title, questions, reveal,
+        marks: t.marks, marksMax, marksEarned: attempts.marksEarned(done ? done.answers : {}, t.marks) });
     }
     return sendJSON(res, 200, { status: 'in_progress', title: t.title, questions,
-      answered: Object.keys(a.answers), deadline, durationMin, reveal, now: Date.now() });
+      answered: Object.keys(a.answers), deadline, durationMin, reveal, marks: t.marks, marksMax, now: Date.now() });
   }
   // ---- TEST SITTING: finish (student submits the whole test, or auto-submit) ----
   if (req.method === 'POST' && url === '/api/test/finish') {
     const me = currentUser(req); if (!me) return sendJSON(res, 401, { error: 'login required' });
     const b = await readBody(req);
     const t = b.testId ? tests.getById(String(b.testId)) : null; if (!t) return sendJSON(res, 404, { error: 'unknown test' });
-    const a = attempts.finish(me.id, String(b.testId));
+    const a = attempts.finish(me.id, String(b.testId), t.marks);
     return sendJSON(res, 200, { status: 'done', score: a ? a.score : 0, answers: a ? a.answers : {}, title: t.title,
-      reveal: { showScore: !!t.showScore, showAnswers: !!t.showAnswers, showSolutions: !!t.showSolutions } });
+      reveal: { showScore: !!t.showScore, showAnswers: !!t.showAnswers, showSolutions: !!t.showSolutions },
+      marks: t.marks, marksMax: tests.marksMax(t), marksEarned: attempts.marksEarned(a ? a.answers : {}, t.marks) });
   }
   // ---- STUDENT: my past test results (scores) ----
   if (req.method === 'GET' && url === '/api/my/test-results') {
@@ -581,17 +584,31 @@ async function handleApi(req, res, url) {
     // Everyone the test is assigned to (for the "not started" count).
     let assignedStudents = auth.allUsers().filter((u) => u.role === 'student'
       && (t.batchIds.length === 0 || t.batchIds.includes(u.batchId)) && inScope(u));
+    const mMax = tests.marksMax(t);
     const rows = attempts.listForTest(t.id).map((a) => { const u = auth.findById(a.userId); return { a, u }; })
       .filter((x) => x.u && x.u.role === 'student' && inScope(x.u))
       .map(({ a, u }) => ({ userId: u.id, name: u.name, email: u.email, branch: u.branch || '', batch: u.batch || '',
         status: a.status, score: a.status === 'done' ? a.score : null, total: a.total, answered: Object.keys(a.answers).length,
+        marks: mMax ? attempts.marksEarned(a.answers, t.marks) : null,
         startedAt: a.startedAt, submittedAt: a.status === 'done' ? a.submittedAt : null }));
     const started = rows.length, submitted = rows.filter((r) => r.status === 'done').length;
     return sendJSON(res, 200, {
-      test: { id: t.id, title: t.title, questionCount: t.questionIds.length, durationMin: t.durationMin, availability: t.availability },
+      test: { id: t.id, title: t.title, questionCount: t.questionIds.length, durationMin: t.durationMin, availability: t.availability, marksMax: mMax },
       summary: { assigned: assignedStudents.length, started, inProgress: started - submitted, submitted, notStarted: Math.max(0, assignedStudents.length - started) },
       rows,
     });
+  }
+  // ---- STAFF: view a student's submitted code for each question in a test ----
+  const sanm = url.match(/^\/api\/staff\/student-answers\/([^/]+)\/([^/]+)$/);
+  if (req.method === 'GET' && sanm) {
+    const me = currentUser(req); if (!isStaff(me)) return sendJSON(res, 403, { error: 'staff only' });
+    const target = auth.findById(sanm[1]); if (!target) return sendJSON(res, 404, { error: 'student not found' });
+    if (me.role === 'subadmin' && !(me.assignedBatches || []).includes(target.batchId)) return sendJSON(res, 403, { error: 'not your student' });
+    const t = tests.getById(sanm[2]); if (!t) return sendJSON(res, 404, { error: 'unknown test' });
+    const answers = t.questionIds.map((qid) => { const q = store.getById(qid); const s = auth.latestSubmission(target.id, qid);
+      return { qid, title: q ? q.title : qid, marks: t.marks[qid] || null,
+        language: s ? s.language : null, code: s ? s.code : '', score: s ? s.score : null, overall: s ? s.overall : null, at: s ? s.at : null }; });
+    return sendJSON(res, 200, { student: target.name, email: target.email, title: t.title, marksMax: tests.marksMax(t), answers });
   }
   // ---- STAFF: reset a student's test attempt (start from scratch) ----
   if (req.method === 'POST' && url === '/api/staff/reset-attempt') {

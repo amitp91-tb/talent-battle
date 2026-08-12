@@ -26,15 +26,29 @@ function recordAnswer(userId, testId, qid, score) {
   return get(userId, testId);
 }
 
-// Close the attempt and compute the overall percentage (each question max 100).
-function finish(userId, testId) {
+// Close the attempt and compute the overall percentage. If `marks` (a {qid:maxMarks}
+// map) is given, questions are weighted by their marks; otherwise every question is
+// weighted equally out of 100.
+function finish(userId, testId, marks) {
   const a = get(userId, testId);
   if (!a || a.status === 'done') return a;
-  const vals = Object.values(a.answers);
-  const score = a.total ? Math.round(vals.reduce((x, y) => x + y, 0) / (a.total * 100) * 100) : 0;
+  let score;
+  if (marks && Object.keys(marks).length) {
+    const totalMax = Object.values(marks).reduce((x, y) => x + (Number(y) || 0), 0);
+    const earned = Object.entries(a.answers).reduce((s, [qid, pct]) => s + ((Number(pct) || 0) / 100) * (Number(marks[qid]) || 0), 0);
+    score = totalMax ? Math.round(earned / totalMax * 100) : 0;
+  } else {
+    const vals = Object.values(a.answers);
+    score = a.total ? Math.round(vals.reduce((x, y) => x + y, 0) / (a.total * 100) * 100) : 0;
+  }
   db.prepare('UPDATE test_attempts SET status=?, score=?, submitted_at=? WHERE user_id=? AND test_id=?')
     .run('done', score, Date.now(), userId, testId);
   return get(userId, testId);
+}
+// Marks a student earned so far (from best-per-question percentages × per-question marks).
+function marksEarned(answers, marks) {
+  if (!marks || !Object.keys(marks).length) return null;
+  return Math.round(Object.entries(answers || {}).reduce((s, [qid, pct]) => s + ((Number(pct) || 0) / 100) * (Number(marks[qid]) || 0), 0));
 }
 
 const listForUser = (userId) => db.prepare('SELECT * FROM test_attempts WHERE user_id=? ORDER BY started_at DESC').all(userId).map(row);
@@ -42,4 +56,4 @@ const listForTest = (testId) => db.prepare('SELECT * FROM test_attempts WHERE te
 // Reset a student's attempt so they can take the test from scratch.
 const remove = (userId, testId) => db.prepare('DELETE FROM test_attempts WHERE user_id=? AND test_id=?').run(userId, testId).changes > 0;
 
-module.exports = { get, start, recordAnswer, finish, listForUser, listForTest, remove };
+module.exports = { get, start, recordAnswer, finish, marksEarned, listForUser, listForTest, remove };

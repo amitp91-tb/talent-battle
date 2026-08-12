@@ -77,6 +77,7 @@ addColumn('tests','open_hours','INTEGER');        // hours the test stays open (
 addColumn('tests','show_score','INTEGER');        // reveal after submit
 addColumn('tests','show_answers','INTEGER');
 addColumn('tests','show_solutions','INTEGER');
+addColumn('tests','marks','TEXT');                // optional per-question marks {qid: marks}
 addColumn('batches','features','TEXT');
 
 const J = (v) => JSON.stringify(v == null ? [] : v);

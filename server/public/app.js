@@ -1159,7 +1159,7 @@ async function delTest(id, btn){
 async function renderTestForm(){
   stopTimer();
   const [questions, batches] = await Promise.all([apiGet('/api/admin/questions'), apiGet('/api/admin/batches')]);
-  const qChecks = questions.length ? questions.map(q=>`<label class="chk"><input type="checkbox" class="q-pick" value="${q.id}"> ${esc(q.title)} <span class="muted">(${esc(q.difficulty)})</span></label>`).join('')
+  const qChecks = questions.length ? questions.map(q=>`<label class="chk"><input type="checkbox" class="q-pick" value="${q.id}"> ${esc(q.title)} <span class="muted">(${esc(q.difficulty)})</span><input type="number" min="1" value="10" class="q-marks" data-q="${q.id}" title="marks" onclick="event.stopPropagation()" style="width:58px;display:none;margin-left:8px"></label>`).join('')
     : '<span class="muted">No questions yet — create some in the Questions tab.</span>';
   const bChecks = batches.length ? batches.map(b=>`<label class="chk"><input type="checkbox" class="b-pick" value="${b.id}"> ${esc(b.name)}</label>`).join('')
     : '<span class="muted">No batches yet.</span>';
@@ -1185,6 +1185,7 @@ async function renderTestForm(){
         <label class="chk"><input type="checkbox" id="t-show-solutions"> The model solution</label>
       </div>
       <h2 style="margin-top:14px">Pick questions</h2>
+      <label class="chk" style="margin-bottom:10px"><input type="checkbox" id="t-use-marks" onchange="onUseMarksChange()"> Assign question-wise marks <span class="muted" style="margin-left:4px">(otherwise all questions are weighted equally)</span></label>
       <div class="checks">${qChecks}</div>
       <h2 style="margin-top:16px">Assign to batches</h2>
       <p class="muted" style="margin-top:0">Leave all unchecked to show this test to every student.</p>
@@ -1194,6 +1195,8 @@ async function renderTestForm(){
 }
 function onAvailChange(){ const sched=(document.querySelector('input[name="t-avail"]:checked')||{}).value==='scheduled';
   const w=document.getElementById('t-startwrap'); if(w) w.style.display=sched?'block':'none'; }
+function onUseMarksChange(){ const on=document.getElementById('t-use-marks').checked;
+  document.querySelectorAll('.q-marks').forEach(el=>el.style.display=on?'inline-block':'none'); }
 async function submitTest(){
   const questionIds = [...document.querySelectorAll('.q-pick:checked')].map(x=>x.value);
   const batchIds = [...document.querySelectorAll('.b-pick:checked')].map(x=>x.value);
@@ -1201,11 +1204,15 @@ async function submitTest(){
   const startLocal = val('t-start');   // datetime-local -> local time
   const startAt = (availability==='scheduled' && startLocal) ? new Date(startLocal).getTime() : 0;
   if(availability==='scheduled' && !startAt){ document.getElementById('terr').textContent='Please set a start date & time for a scheduled test.'; return; }
+  let marks = {};
+  if(document.getElementById('t-use-marks') && document.getElementById('t-use-marks').checked){
+    [...document.querySelectorAll('.q-marks')].forEach(el=>{ if(questionIds.includes(el.dataset.q)){ const v=Number(el.value)||0; if(v>0) marks[el.dataset.q]=v; } });
+  }
   const { status, body } = await apiPost('/api/admin/tests',
     { title:val('t-title'), description:val('t-desc'), durationMin:val('t-duration'),
       availability, startAt, openHours:val('t-hours'),
       showScore:document.getElementById('t-show-score').checked, showAnswers:document.getElementById('t-show-answers').checked, showSolutions:document.getElementById('t-show-solutions').checked,
-      questionIds, batchIds });
+      marks, questionIds, batchIds });
   if(status!==200){ document.getElementById('terr').textContent = body.error||'Could not create test'; return; }
   renderAdminTests();
 }
@@ -1319,17 +1326,19 @@ function renderTestDone(d){
   stopTimer(); if(ME) renderUserbar();
   const reveal = d.reveal || { showScore:true, showAnswers:false, showSolutions:false };
   const score=(d.score==null?0:d.score);
+  const marks=d.marks||{}, marksMax=d.marksMax||0;
   const answers=d.answers||{}; const qmap={}; (d.questions||[]).forEach(q=>qmap[q.id]=q.title);
   const scoreBlock = reveal.showScore
-    ? `<div style="font-size:52px;font-weight:800;margin:12px 0;color:var(--gold,#4f46e5)">${score}%</div>`
+    ? `<div style="font-size:52px;font-weight:800;margin:12px 0 2px;color:var(--gold,#4f46e5)">${score}%</div>${marksMax?`<div style="font-size:17px;font-weight:600;color:var(--muted)">${d.marksEarned==null?0:d.marksEarned} / ${marksMax} marks</div>`:''}`
     : `<p class="muted" style="margin:14px 0">Your responses have been recorded. Your score will be shared by your administrator.</p>`;
   let detail='';
   if(reveal.showAnswers){
     const cols = reveal.showSolutions ? 3 : 2;
+    const scoreCell=(qid,s)=> marksMax&&marks[qid] ? `${Math.round(s/100*marks[qid])}/${marks[qid]}` : `${s}/100`;
     const rows=Object.keys(answers).length
-      ? Object.entries(answers).map(([qid,s])=>`<tr><td>${esc(qmap[qid]||qid)}</td><td>${s}/100</td>${reveal.showSolutions?`<td><button class="btn btn-ghost" style="padding:2px 10px" onclick="viewDoneSolution('${qid}',this)">Solution</button></td>`:''}</tr>`).join('')
+      ? Object.entries(answers).map(([qid,s])=>`<tr><td>${esc(qmap[qid]||qid)}</td><td>${scoreCell(qid,s)}</td>${reveal.showSolutions?`<td><button class="btn btn-ghost" style="padding:2px 10px" onclick="viewDoneSolution('${qid}',this)">Solution</button></td>`:''}</tr>`).join('')
       : `<tr><td colspan="${cols}" class="muted">No questions were answered.</td></tr>`;
-    detail=`<table style="margin:6px auto 0;max-width:540px"><tr><th>Question</th><th>Score</th>${reveal.showSolutions?'<th></th>':''}</tr>${rows}</table>`;
+    detail=`<table style="margin:6px auto 0;max-width:540px"><tr><th>Question</th><th>${marksMax?'Marks':'Score'}</th>${reveal.showSolutions?'<th></th>':''}</tr>${rows}</table>`;
   } else if(reveal.showSolutions){
     detail=(d.questions||[]).map(q=>`<div style="margin:6px 0"><b>${esc(q.title)}</b> <button class="btn btn-ghost" style="padding:2px 10px" onclick="viewDoneSolution('${q.id}',this)">Solution</button></div>`).join('');
   }
@@ -1402,18 +1411,46 @@ function renderTaTable(){
   let rows=(__ta.rows||[]).filter(r=> (!stf || r.status===stf) && (!q || (r.name+' '+r.email+' '+(r.branch||'')).toLowerCase().includes(q)));
   const k=__taSort.key, dir=__taSort.dir;
   rows=rows.slice().sort((a,b)=>{ let x=a[k], y=b[k]; if(x==null)x=''; if(y==null)y=''; if(typeof x==='string'||typeof y==='string') return dir*String(x).localeCompare(String(y)); return dir*((x||0)-(y||0)); });
-  const cols=[['name','Student'],['email','Email'],['branch','Branch'],['status','Status'],['score','Score'],['startedAt','Started'],['submittedAt','Submitted']];
+  const mMax=__ta.test.marksMax||0;
+  const cols=[['name','Student'],['email','Email'],['branch','Branch'],['status','Status'],['score','Score']];
+  if(mMax) cols.push(['marks','Marks']);
+  cols.push(['startedAt','Started'],['submittedAt','Submitted']);
   const arrow=(key)=> __taSort.key===key ? (__taSort.dir>0?' ▲':' ▼') : '';
   const head=cols.map(c=>`<th style="cursor:pointer;user-select:none" onclick="taSort('${c[0]}')">${c[1]}${arrow(c[0])}</th>`).join('')+'<th></th>';
   const tid=__ta.test.id;
+  const colSpan=cols.length+1;
   const body=rows.map(r=>`<tr>
       <td>${esc(r.name)}</td><td>${esc(r.email)}</td><td>${esc(r.branch||'-')}</td>
       <td>${r.status==='done'?'<span class="badge b-ready">Submitted</span>':'<span class="badge b-mod">In progress</span>'}</td>
       <td>${r.score==null?'—':('<b>'+r.score+'%</b>')}</td>
+      ${mMax?`<td>${r.marks==null?'—':('<b>'+r.marks+'</b>/'+mMax)}</td>`:''}
       <td>${taTime(r.startedAt)}</td><td>${taTime(r.submittedAt)}</td>
-      <td><button class="btn btn-ghost" style="padding:3px 10px" onclick="resetStudentTest('${r.userId}','${tid}','${esc(r.name).replace(/'/g,'')}')">Reset</button></td>
-    </tr>`).join('') || '<tr><td colspan="8" class="muted">No students match.</td></tr>';
+      <td style="white-space:nowrap">
+        <button class="btn btn-ghost" style="padding:3px 10px" onclick="viewStudentAnswers('${r.userId}','${tid}','${esc(r.name).replace(/'/g,'')}')">Answers</button>
+        <button class="btn btn-ghost" style="padding:3px 10px" onclick="resetStudentTest('${r.userId}','${tid}','${esc(r.name).replace(/'/g,'')}')">Reset</button></td>
+    </tr>`).join('') || `<tr><td colspan="${colSpan}" class="muted">No students match.</td></tr>`;
   document.getElementById('ta-table').innerHTML=`<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+async function viewStudentAnswers(userId, testId, name){
+  stopTimer();
+  const d = await apiGet('/api/staff/student-answers/'+userId+'/'+testId);
+  if(!d || !d.answers){ toast('Could not load answers'); return; }
+  const L={python:'Python',cpp:'C++',java:'Java',javascript:'JavaScript',c:'C',ruby:'Ruby',php:'PHP',go:'Go',rust:'Rust',bash:'Bash'};
+  const blocks=d.answers.map((ans,i)=>`<div class="card" style="margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <b>Q${i+1}. ${esc(ans.title)}</b>
+        ${ans.marks?`<span class="pill pill-medium">${ans.marks} marks</span>`:''}
+        <span class="grow"></span>
+        ${ans.overall?`<span class="badge ${ans.overall==='Accepted'?'b-ready':'b-imp'}">${esc(ans.overall)}</span>`:''}
+        ${ans.score!=null?`<span class="muted">${ans.score}/100</span>`:''}
+        ${ans.language?`<span class="muted">· ${esc(L[ans.language]||ans.language)}</span>`:''}
+        ${ans.at?`<span class="muted">· ${new Date(ans.at).toLocaleString()}</span>`:''}
+      </div>
+      ${ans.code?`<pre class="code" style="margin-top:8px;max-height:340px">${esc(ans.code)}</pre>`:'<p class="muted" style="margin:8px 0 0">No submission for this question.</p>'}
+    </div>`).join('');
+  app.innerHTML=`<div class="test-top"><button class="btn btn-ghost" onclick="renderTestAnalytics('${testId}')">← Analytics</button></div>
+    <h1>${esc(name)} — answers</h1><p class="muted">${esc(d.email||'')} · ${esc(d.title)} · showing each question's most recent submission.</p>
+    ${blocks||'<p class="muted">No answers.</p>'}`;
 }
 async function resetStudentTest(userId, testId, name){
   if(!confirm('Reset the test for "'+name+'"? Their current attempt is deleted and they can start from scratch.')) return;

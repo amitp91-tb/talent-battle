@@ -111,6 +111,11 @@ const userSubmissions = (userId) => db.prepare('SELECT * FROM submissions WHERE 
 const allSubmissions = () => db.prepare('SELECT * FROM submissions').all().map(subRow);
 const submissionsForProblem = (problemId) =>
   db.prepare('SELECT user_id,language,score,overall,runtime_ms,memory_kb,at FROM submissions WHERE problem_id=?').all(problemId);
+// The most recent code a student submitted for a problem (for staff cross-checking).
+function latestSubmission(userId, problemId) {
+  const r = db.prepare('SELECT source,language,score,overall,at FROM submissions WHERE user_id=? AND problem_id=? ORDER BY at DESC LIMIT 1').get(userId, problemId);
+  return r ? { code: r.source || '', language: r.language, score: r.score, overall: r.overall, at: r.at } : null;
+}
 
 module.exports = { hashPassword, verifyPassword, publicUser, createUser, updateUser, findByEmail,
-  findById, setPassword, createReset, consumeReset, startSession, endSession, userForToken, addSubmission, userSubmissions, allSubmissions, submissionsForProblem, allUsers };
+  findById, setPassword, createReset, consumeReset, startSession, endSession, userForToken, addSubmission, userSubmissions, allSubmissions, submissionsForProblem, latestSubmission, allUsers };
