@@ -610,6 +610,27 @@ async function handleApi(req, res, url) {
         language: s ? s.language : null, code: s ? s.code : '', score: s ? s.score : null, overall: s ? s.overall : null, at: s ? s.at : null }; });
     return sendJSON(res, 200, { student: target.name, email: target.email, title: t.title, marksMax: tests.marksMax(t), answers });
   }
+  // ---- STAFF: re-run a student's submitted code to see the compiler output + per-case pass/fail ----
+  if (req.method === 'POST' && url === '/api/staff/rejudge') {
+    const me = currentUser(req); if (!isStaff(me)) return sendJSON(res, 403, { error: 'staff only' });
+    const b = await readBody(req);
+    const target = auth.findById(b.userId); if (!target) return sendJSON(res, 404, { error: 'student not found' });
+    if (me.role === 'subadmin' && !(me.assignedBatches || []).includes(target.batchId)) return sendJSON(res, 403, { error: 'not your student' });
+    const q = store.getById(b.qid); if (!q) return sendJSON(res, 404, { error: 'unknown question' });
+    const sub = auth.latestSubmission(target.id, b.qid);
+    if (!sub || !sub.code) return sendJSON(res, 200, { overall: 'No submission', results: [] });
+    if (!AVAILABLE[sub.language]) return sendJSON(res, 200, { overall: 'Language Unavailable', results: [], note: `${sub.language} is not installed here.` });
+    const cases = store.toTestCases(q);
+    let effCode = sub.code;
+    if (q.mode === 'function' && q.harness && q.harness[sub.language] && q.harness[sub.language].driver)
+      effCode = String(q.harness[sub.language].driver).replace('{{SOLUTION}}', sub.code);
+    let result;
+    try { result = await jobQueue.run(() => judge({ language: sub.language, code: effCode, testCases: cases,
+      timeLimitMs: q.timeLimitMs, memoryMb: q.memoryMb, checker: q.checker, floatTolerance: q.floatTolerance, revealHidden: true })); }
+    catch (e) { if (e && e.overloaded) return sendJSON(res, 503, { overall: 'Server busy', results: [] }); throw e; }
+    return sendJSON(res, 200, { language: sub.language, overall: result.overall, compileOutput: result.compileOutput || '',
+      passed: result.passed, total: result.total, score: result.score, results: result.results || [] });
+  }
   // ---- STAFF: reset a student's test attempt (start from scratch) ----
   if (req.method === 'POST' && url === '/api/staff/reset-attempt') {
     const me = currentUser(req); if (!isStaff(me)) return sendJSON(res, 403, { error: 'staff only' });

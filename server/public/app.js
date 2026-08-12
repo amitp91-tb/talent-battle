@@ -1446,11 +1446,24 @@ async function viewStudentAnswers(userId, testId, name){
         ${ans.language?`<span class="muted">· ${esc(L[ans.language]||ans.language)}</span>`:''}
         ${ans.at?`<span class="muted">· ${new Date(ans.at).toLocaleString()}</span>`:''}
       </div>
-      ${ans.code?`<pre class="code" style="margin-top:8px;max-height:340px">${esc(ans.code)}</pre>`:'<p class="muted" style="margin:8px 0 0">No submission for this question.</p>'}
+      ${ans.code?`<pre class="code" style="margin-top:8px;max-height:340px">${esc(ans.code)}</pre>
+        <button class="btn btn-ghost" style="margin-top:8px" onclick="showRejudge('${userId}','${testId}','${ans.qid}',this)">Show test results</button>
+        <div id="rj-${ans.qid}" style="margin-top:8px"></div>`:'<p class="muted" style="margin:8px 0 0">No submission for this question.</p>'}
     </div>`).join('');
   app.innerHTML=`<div class="test-top"><button class="btn btn-ghost" onclick="renderTestAnalytics('${testId}')">← Analytics</button></div>
     <h1>${esc(name)} — answers</h1><p class="muted">${esc(d.email||'')} · ${esc(d.title)} · showing each question's most recent submission.</p>
     ${blocks||'<p class="muted">No answers.</p>'}`;
+}
+async function showRejudge(userId, testId, qid, btn){
+  const host=document.getElementById('rj-'+qid); if(host) host.innerHTML='<div class="muted">Re-running the submission…</div>';
+  btn.disabled=true;
+  const { status, body }=await apiPost('/api/staff/rejudge', { userId, testId, qid });
+  btn.disabled=false;
+  if(status!==200 || !body){ if(host) host.innerHTML='<div class="row"><span class="dot bad"></span>Could not re-run — try again.</div>'; return; }
+  if(body.overall==='Compilation Error'){ if(host) host.innerHTML=`<div class="row"><span class="dot bad"></span><b>Compilation Error</b> — the compiler rejected this code:</div><pre class="code">${esc((body.compileOutput||'(no output)').slice(0,1400))}</pre>`; return; }
+  if(body.overall==='Language Unavailable' || body.overall==='No submission'){ if(host) host.innerHTML=`<div class="muted">${esc(body.note||body.overall)}</div>`; return; }
+  if(!body.results || !body.results.length){ if(host) host.innerHTML=`<div class="muted">${esc(body.overall||'No result')}</div>`; return; }
+  if(host) host.innerHTML=`<div class="row"><span class="dot ${body.overall==='Accepted'?'ok':'bad'}"></span><b>${esc(body.overall)}</b> — ${body.passed}/${body.total} test cases passed</div>`+body.results.map(verdictRow).join('');
 }
 async function resetStudentTest(userId, testId, name){
   if(!confirm('Reset the test for "'+name+'"? Their current attempt is deleted and they can start from scratch.')) return;
