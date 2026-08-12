@@ -71,6 +71,12 @@ addColumn('questions','mode','TEXT'); addColumn('questions','harness','TEXT');
 addColumn('challenge','time_complexity','TEXT'); addColumn('challenge','space_complexity','TEXT'); addColumn('challenge','solutions','TEXT');
 addColumn('users','must_change_password','INTEGER');
 addColumn('tests','duration_min','INTEGER');
+addColumn('tests','availability','TEXT');       // 'open' | 'scheduled'
+addColumn('tests','start_at','INTEGER');         // scheduled start (ms)
+addColumn('tests','open_hours','INTEGER');        // hours the test stays open (0 = no auto-close)
+addColumn('tests','show_score','INTEGER');        // reveal after submit
+addColumn('tests','show_answers','INTEGER');
+addColumn('tests','show_solutions','INTEGER');
 addColumn('batches','features','TEXT');
 
 const J = (v) => JSON.stringify(v == null ? [] : v);

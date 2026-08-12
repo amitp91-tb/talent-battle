@@ -409,3 +409,13 @@ tbody tr:hover td, table tr:hover td{ background:#f8fafc; }
 
 /* exam gate */
 .examgate-card{ box-shadow:0 12px 44px rgba(30,41,59,.16); }
+
+/* question palette (student exam navigation) */
+.qnav{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; background:#fff; border:1px solid var(--line);
+  border-radius:12px; padding:8px 10px; margin-bottom:10px; box-shadow:0 1px 2px rgba(30,41,59,.04); }
+.qpalette{ display:flex; gap:6px; flex-wrap:wrap; }
+.qp{ width:34px; height:34px; border-radius:9px; border:1px solid var(--line); background:#f6f8fb; color:#334155;
+  font-weight:700; font-size:13px; cursor:pointer; transition:all .1s; }
+.qp:hover{ border-color:#818cf8; }
+.qp.done{ background:#e8f6ec; border-color:#bfe3c6; color:#2c7a3d; }          /* submitted */
+.qp.cur{ background:linear-gradient(135deg,#6366f1,#4f46e5); border-color:#4f46e5; color:#fff; box-shadow:0 3px 8px rgba(79,70,229,.32); }

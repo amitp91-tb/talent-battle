@@ -419,9 +419,10 @@ async function handleApi(req, res, url) {
     const me = currentUser(req); if (!me) return sendJSON(res, 401, { error: 'login required' });
     if (me.role === 'student' && !groups.featuresFor(me.batchId).tests) return sendJSON(res, 200, []);
     const my = tests.forBatch(me.batchId || '');
-    return sendJSON(res, 200, my.map((t) => { const a = attempts.get(me.id, t.id);
+    return sendJSON(res, 200, my.map((t) => { const a = attempts.get(me.id, t.id); const w = tests.windowStatus(t);
       return { id: t.id, title: t.title, description: t.description, questionCount: t.questionIds.length,
-        attemptStatus: a ? a.status : 'none', score: (a && a.status === 'done') ? a.score : null }; }));
+        attemptStatus: a ? a.status : 'none', score: (a && a.status === 'done') ? a.score : null,
+        windowState: w.state, opensAt: w.opensAt, closesAt: w.closesAt, durationMin: t.durationMin }; }));
   }
   // ---- TEST SITTING: start (or resume; a completed test is not restartable) ----
   if (req.method === 'POST' && url === '/api/test/start') {
@@ -431,20 +432,26 @@ async function handleApi(req, res, url) {
     if (!(t.batchIds.length === 0 || t.batchIds.includes(me.batchId))) return sendJSON(res, 403, { error: 'not assigned to you' });
     const questions = t.questionIds.map((qid) => store.getById(qid)).filter(Boolean)
       .map((q) => ({ id: q.id, title: q.title, difficulty: q.difficulty, tags: q.tags }));
+    const reveal = { showScore: !!t.showScore, showAnswers: !!t.showAnswers, showSolutions: !!t.showSolutions };
     const existing = attempts.get(me.id, t.id);
     if (existing && existing.status === 'done')
       return sendJSON(res, 200, { status: 'done', score: existing.score, answers: existing.answers,
-        title: t.title, questions, submittedAt: existing.submittedAt });
+        title: t.title, questions, reveal, submittedAt: existing.submittedAt });
+    // Enforce the availability window for a NEW start (a resume/completed view is always allowed).
+    if (!existing) { const w = tests.windowStatus(t);
+      if (w.state === 'upcoming') return sendJSON(res, 403, { error: 'This test has not started yet. It opens at ' + new Date(w.opensAt).toLocaleString() + '.' });
+      if (w.state === 'closed') return sendJSON(res, 403, { error: 'This test is now closed and can no longer be started.' });
+    }
     const a = attempts.start(me.id, t.id, questions.length);
     const durationMin = t.durationMin || 0;
     const deadline = durationMin > 0 ? (a.startedAt + durationMin * 60000) : 0;
     // Time is up on re-open: finish and show the score (no fresh timer on restart).
     if (deadline && Date.now() >= deadline) {
       const done = attempts.finish(me.id, t.id);
-      return sendJSON(res, 200, { status: 'done', score: done ? done.score : 0, answers: done ? done.answers : {}, title: t.title, questions });
+      return sendJSON(res, 200, { status: 'done', score: done ? done.score : 0, answers: done ? done.answers : {}, title: t.title, questions, reveal });
     }
     return sendJSON(res, 200, { status: 'in_progress', title: t.title, questions,
-      answered: Object.keys(a.answers), deadline, durationMin, now: Date.now() });
+      answered: Object.keys(a.answers), deadline, durationMin, reveal, now: Date.now() });
   }
   // ---- TEST SITTING: finish (student submits the whole test, or auto-submit) ----
   if (req.method === 'POST' && url === '/api/test/finish') {
@@ -452,7 +459,8 @@ async function handleApi(req, res, url) {
     const b = await readBody(req);
     const t = b.testId ? tests.getById(String(b.testId)) : null; if (!t) return sendJSON(res, 404, { error: 'unknown test' });
     const a = attempts.finish(me.id, String(b.testId));
-    return sendJSON(res, 200, { status: 'done', score: a ? a.score : 0, answers: a ? a.answers : {}, title: t.title });
+    return sendJSON(res, 200, { status: 'done', score: a ? a.score : 0, answers: a ? a.answers : {}, title: t.title,
+      reveal: { showScore: !!t.showScore, showAnswers: !!t.showAnswers, showSolutions: !!t.showSolutions } });
   }
   // ---- STUDENT: my past test results (scores) ----
   if (req.method === 'GET' && url === '/api/my/test-results') {
@@ -551,6 +559,47 @@ async function handleApi(req, res, url) {
     const weak = {}; for (const s of auth.allSubmissions()) if (idset.has(s.userId) && (s.score || 0) < 100) for (const t of (s.tags || [])) weak[t] = (weak[t] || 0) + 1;
     const weakTopics = Object.entries(weak).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([tag, count]) => ({ tag, count }));
     return sendJSON(res, 200, { scope, totalStudents: students.length, batchAvg, students: rows.sort((a, b) => a.avg - b.avg), weakTopics });
+  }
+
+  // ---- STAFF: tests they can analyse (admin: all; sub-admin: their batches) ----
+  if (req.method === 'GET' && url === '/api/staff/tests') {
+    const me = currentUser(req); if (!isStaff(me)) return sendJSON(res, 403, { error: 'staff only' });
+    const assigned = me.assignedBatches || [];
+    const visible = tests.list().filter((t) => me.role === 'admin' || t.batchIds.length === 0 || t.batchIds.some((b) => assigned.includes(b)));
+    return sendJSON(res, 200, visible.map((t) => ({ id: t.id, title: t.title, questionCount: t.questionIds.length,
+      durationMin: t.durationMin, availability: t.availability, batchNames: t.batchIds.length, createdAt: t.createdAt })));
+  }
+  // ---- STAFF: per-test analytics (student rows + counts; sub-admin scoped) ----
+  const tam = url.match(/^\/api\/staff\/test-analytics\/([^/]+)$/);
+  if (req.method === 'GET' && tam) {
+    const me = currentUser(req); if (!isStaff(me)) return sendJSON(res, 403, { error: 'staff only' });
+    const t = tests.getById(tam[1]); if (!t) return sendJSON(res, 404, { error: 'unknown test' });
+    const assigned = me.assignedBatches || [];
+    if (me.role === 'subadmin' && !(t.batchIds.length === 0 || t.batchIds.some((b) => assigned.includes(b))))
+      return sendJSON(res, 403, { error: 'not your test' });
+    const inScope = (u) => me.role === 'admin' ? true : assigned.includes(u.batchId);
+    // Everyone the test is assigned to (for the "not started" count).
+    let assignedStudents = auth.allUsers().filter((u) => u.role === 'student'
+      && (t.batchIds.length === 0 || t.batchIds.includes(u.batchId)) && inScope(u));
+    const rows = attempts.listForTest(t.id).map((a) => { const u = auth.findById(a.userId); return { a, u }; })
+      .filter((x) => x.u && x.u.role === 'student' && inScope(x.u))
+      .map(({ a, u }) => ({ userId: u.id, name: u.name, email: u.email, branch: u.branch || '', batch: u.batch || '',
+        status: a.status, score: a.status === 'done' ? a.score : null, total: a.total, answered: Object.keys(a.answers).length,
+        startedAt: a.startedAt, submittedAt: a.status === 'done' ? a.submittedAt : null }));
+    const started = rows.length, submitted = rows.filter((r) => r.status === 'done').length;
+    return sendJSON(res, 200, {
+      test: { id: t.id, title: t.title, questionCount: t.questionIds.length, durationMin: t.durationMin, availability: t.availability },
+      summary: { assigned: assignedStudents.length, started, inProgress: started - submitted, submitted, notStarted: Math.max(0, assignedStudents.length - started) },
+      rows,
+    });
+  }
+  // ---- STAFF: reset a student's test attempt (start from scratch) ----
+  if (req.method === 'POST' && url === '/api/staff/reset-attempt') {
+    const me = currentUser(req); if (!isStaff(me)) return sendJSON(res, 403, { error: 'staff only' });
+    const b = await readBody(req);
+    const target = auth.findById(b.userId); if (!target) return sendJSON(res, 404, { error: 'student not found' });
+    if (me.role === 'subadmin' && !(me.assignedBatches || []).includes(target.batchId)) return sendJSON(res, 403, { error: 'not your student' });
+    return sendJSON(res, 200, { ok: attempts.remove(b.userId, String(b.testId || '')) });
   }
 
   // ---- GROUP-WISE ANALYTICS (staff; scoped for sub-admin) ----

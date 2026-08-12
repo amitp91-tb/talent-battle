@@ -245,10 +245,12 @@ function renderUserbar(){
            <button onclick="renderStudents()">Students</button>
            <button onclick="renderSubadmins()">Sub-Admins</button>
            <button onclick="renderFaculty()">Results</button>
+           <button onclick="renderStaffTests()">Test Analytics</button>
            <button onclick="renderReports()">Reports</button>
            <button onclick="renderList()">Preview</button>`;
   } else if(ME.role==='subadmin'){
-    nav = `<button onclick="renderFaculty()">Results</button>`;
+    nav = `<button onclick="renderFaculty()">Results</button>
+           <button onclick="renderStaffTests()">Test Analytics</button>`;
   } else {
     const f = ME.features || {};
     const on = (k)=> f[k] !== false;   // default on if not specified
@@ -319,6 +321,11 @@ function renderTest(d){
   const langOpts = (availLangs.length?availLangs:Object.keys(LANGS.labels).filter(k=>LANGS.available[k])).map(k=>`<option value="${k}">${esc(LANGS.labels[k]||k)}</option>`).join('');
   app.innerHTML = `
     ${examMode?`<div class="exambar" style="font-size:15px;font-weight:600">🔒 Exam in progress${qpos}. Full screen required · copy/paste &amp; tab-switch are disabled and recorded.</div>`:''}
+    ${inTest?`<div class="qnav"><div class="qpalette" id="qpalette">${paletteHTML()}</div>
+      <span class="grow"></span>
+      <button class="btn btn-ghost" onclick="examPrev()">← Prev</button>
+      <button class="btn btn-ghost" onclick="examNext()">Next →</button>
+      <button class="btn btn-primary" onclick="confirmFinishTest()">Finish test</button></div>`:''}
     <div class="test-top">
       ${examMode?'':`<button class="btn btn-ghost" onclick="renderList()">← Problems</button>`}
       <span class="proctor" id="proctor-badge" ${examMode?'style="font-size:16px;font-weight:800;padding:7px 14px"':''}>Proctoring: on</span>
@@ -338,7 +345,7 @@ function renderTest(d){
           <select id="lang" onchange="onLangChange()">${langOpts}</select>
           <span class="grow"></span>
           <button class="btn btn-ghost" onclick="doRun('${d.meta.id}')">▷ Run</button>
-          <button class="btn btn-primary" onclick="${inTest?`doExamSubmit('${d.meta.id}')`:`doSubmit('${d.meta.id}')`}">${inTest?((window.__test.idx < window.__test.questions.length-1)?'Submit &amp; Next →':'Submit &amp; Finish'):'Submit'}</button>
+          <button class="btn btn-primary" onclick="${inTest?`doExamSubmit('${d.meta.id}')`:`doSubmit('${d.meta.id}')`}">${inTest?'Submit this question':'Submit'}</button>
           ${(ME&&ME.role!=='student')?`<button class="btn btn-ghost" onclick="viewSolution('${d.meta.id}')">Solution</button>`:''}
         </div>
         <div class="editor-wrap">
@@ -1135,6 +1142,7 @@ async function renderAdminTests(){
       <div><div class="t">${esc(t.title)}</div>
         <div class="tags">${t.questionCount} question(s) · ${t.batchNames.length?('for '+t.batchNames.map(esc).join(', ')):'all batches'}</div></div>
       <span class="grow"></span>
+      <button class="btn btn-ghost" onclick="renderTestAnalytics('${t.id}')">Analytics</button>
       <button class="btn btn-ghost" onclick="delTest('${t.id}', this)">Delete</button>
     </div>`).join('') || '<p class="muted">No tests yet. Create one to bundle questions together.</p>';
   app.innerHTML = `<div style="display:flex;align-items:center;gap:12px">
@@ -1161,6 +1169,21 @@ async function renderTestForm(){
       <div class="field"><label>Title</label><input id="t-title" placeholder="Week 1 — Arrays & Strings"></div>
       <div class="field"><label>Description (optional)</label><textarea id="t-desc" style="height:70px"></textarea></div>
       <div class="field"><label>Time limit (minutes)</label><input id="t-duration" type="number" min="0" value="30" style="max-width:160px"><span class="muted" style="margin-left:8px;font-size:12px">Whole test is one timed sitting. 0 = no limit.</span></div>
+      <h2 style="margin-top:14px">Availability</h2>
+      <div class="checks" style="margin-bottom:8px">
+        <label class="chk"><input type="radio" name="t-avail" value="open" checked onchange="onAvailChange()"> Open — students can take it anytime</label>
+        <label class="chk"><input type="radio" name="t-avail" value="scheduled" onchange="onAvailChange()"> Scheduled — only on/after a date &amp; time</label>
+      </div>
+      <div class="split">
+        <div class="field" id="t-startwrap" style="display:none"><label>Starts on (date &amp; time)</label><input id="t-start" type="datetime-local"></div>
+        <div class="field"><label>Open for (hours)</label><input id="t-hours" type="number" min="0" value="0" style="max-width:160px"><span class="muted" style="margin-left:8px;font-size:12px">Auto-closes this many hours after it opens. 0 = never closes.</span></div>
+      </div>
+      <h2 style="margin-top:14px">After a student submits, show them:</h2>
+      <div class="checks">
+        <label class="chk"><input type="checkbox" id="t-show-score" checked> Their score</label>
+        <label class="chk"><input type="checkbox" id="t-show-answers"> Which cases passed/failed</label>
+        <label class="chk"><input type="checkbox" id="t-show-solutions"> The model solution</label>
+      </div>
       <h2 style="margin-top:14px">Pick questions</h2>
       <div class="checks">${qChecks}</div>
       <h2 style="margin-top:16px">Assign to batches</h2>
@@ -1169,11 +1192,20 @@ async function renderTestForm(){
       <div style="margin-top:16px"><button class="btn btn-primary" onclick="submitTest()">Create test</button></div>
     </div>`;
 }
+function onAvailChange(){ const sched=(document.querySelector('input[name="t-avail"]:checked')||{}).value==='scheduled';
+  const w=document.getElementById('t-startwrap'); if(w) w.style.display=sched?'block':'none'; }
 async function submitTest(){
   const questionIds = [...document.querySelectorAll('.q-pick:checked')].map(x=>x.value);
   const batchIds = [...document.querySelectorAll('.b-pick:checked')].map(x=>x.value);
+  const availability = (document.querySelector('input[name="t-avail"]:checked')||{}).value || 'open';
+  const startLocal = val('t-start');   // datetime-local -> local time
+  const startAt = (availability==='scheduled' && startLocal) ? new Date(startLocal).getTime() : 0;
+  if(availability==='scheduled' && !startAt){ document.getElementById('terr').textContent='Please set a start date & time for a scheduled test.'; return; }
   const { status, body } = await apiPost('/api/admin/tests',
-    { title:val('t-title'), description:val('t-desc'), durationMin:val('t-duration'), questionIds, batchIds });
+    { title:val('t-title'), description:val('t-desc'), durationMin:val('t-duration'),
+      availability, startAt, openHours:val('t-hours'),
+      showScore:document.getElementById('t-show-score').checked, showAnswers:document.getElementById('t-show-answers').checked, showSolutions:document.getElementById('t-show-solutions').checked,
+      questionIds, batchIds });
   if(status!==200){ document.getElementById('terr').textContent = body.error||'Could not create test'; return; }
   renderAdminTests();
 }
@@ -1183,12 +1215,19 @@ async function renderStudentTests(){
   stopTimer();
   const list = await apiGet('/api/tests');
   const rows = list.map(t=>{
-    const badge = t.attemptStatus==='done' ? `<span class="pill pill-easy">✓ ${t.score}%</span>`
-      : (t.attemptStatus==='in_progress' ? '<span class="pill pill-medium">Resume</span>' : '');
-    return `<div class="card prow" onclick="openTest('${t.id}')">
-      <div><div class="t">${esc(t.title)}</div>
-        <div class="tags">${t.questionCount} question(s)${t.description?' · '+esc(t.description):''}</div></div>
-      <span class="grow"></span>${badge}<button class="btn btn-ghost">${t.attemptStatus==='done'?'View →':'Open →'}</button>
+    const done=t.attemptStatus==='done', inprog=t.attemptStatus==='in_progress';
+    // Availability (a started/completed attempt is always openable to view/resume).
+    const upcoming = t.windowState==='upcoming' && !done && !inprog;
+    const closed = t.windowState==='closed' && !done && !inprog;
+    const badge = done ? `<span class="pill pill-easy">✓ ${t.score}%</span>`
+      : inprog ? '<span class="pill pill-medium">Resume</span>'
+      : upcoming ? `<span class="pill pill-medium">Opens ${new Date(t.opensAt).toLocaleString()}</span>`
+      : closed ? '<span class="pill pill-hard">Closed</span>' : '';
+    const clickable = done || inprog || (!upcoming && !closed);
+    const sub = `${t.questionCount} question(s)${t.durationMin?(' · '+t.durationMin+' min'):''}${t.description?' · '+esc(t.description):''}${(!done && t.closesAt)?(' · closes '+new Date(t.closesAt).toLocaleDateString()):''}`;
+    return `<div class="card prow" ${clickable?`onclick="openTest('${t.id}')"`:'style="opacity:.6;cursor:not-allowed"'}>
+      <div><div class="t">${esc(t.title)}</div><div class="tags">${sub}</div></div>
+      <span class="grow"></span>${badge}${clickable?`<button class="btn btn-ghost">${done?'View →':(inprog?'Resume →':'Open →')}</button>`:''}
     </div>`;
   }).join('') || '<p class="muted">No tests assigned to you yet. Try “All Problems” to practise freely.</p>';
   app.innerHTML = `<div style="display:flex;align-items:center;gap:10px"><h1 style="margin:0">My Tests</h1><span class="grow"></span><button class="btn btn-ghost" onclick="renderMyResults()">📊 My Results</button></div>
@@ -1204,7 +1243,7 @@ async function openTest(id){
   window.__examKind='test';
   const answered=(body.answered||[]), qs=(body.questions||[]);
   let idx=qs.findIndex(q=>!answered.includes(q.id)); if(idx<0) idx=0;
-  window.__test={ id, title:body.title, questions:qs, answered:answered.slice(), idx, deadline:body.deadline||0 };
+  window.__test={ id, title:body.title, questions:qs, answered:answered.slice(), idx, deadline:body.deadline||0, reveal:body.reveal||{showScore:true} };
   window.__examBack=()=>renderStudentTests();
   renderExamGate(body.title, { resuming: answered.length>0, deadline: body.deadline||0, durationMin: body.durationMin||0 });
 }
@@ -1251,37 +1290,64 @@ async function doExamSubmit(id){
   if(status===401){ alert('Please log in again.'); renderAuth('login'); return; }
   if(!out || status>=500){ if(res) res.innerHTML='<div class="row"><span class="dot bad"></span>The judge could not process this. Your code is preserved — try again.</div>'; return; }
   const t=window.__test; if(t && !t.answered.includes(id)) t.answered.push(id);
-  if(res) res.innerHTML=`<div class="row"><span class="dot ${out.overall==='Accepted'?'ok':'bad'}"></span><b>${esc(out.overall)}</b> — ${out.passed}/${out.total} tests</div>`;
-  if(!t) return;
-  if(t.idx < t.questions.length-1){ t.idx++; advancing=true; setTimeout(loadExamQuestion, 800); }
-  else setTimeout(()=>finishTest(false), 800);
+  renderPalette();   // mark this question as submitted in the palette
+  if(res) res.innerHTML=`<div class="row"><span class="dot ${out.overall==='Accepted'?'ok':'bad'}"></span><b>${esc(out.overall)}</b> — ${out.passed}/${out.total} tests · <span class="muted">saved. Use the question numbers to move on, or Finish test when done.</span></div>`;
 }
+// ---- Question palette / navigation ----
+function paletteHTML(){ const t=window.__test; if(!t) return '';
+  return t.questions.map((q,i)=>`<button class="qp ${i===t.idx?'cur':''} ${t.answered.includes(q.id)?'done':''}" onclick="examGoto(${i})" title="Question ${i+1}">${i+1}</button>`).join(''); }
+function renderPalette(){ const el=document.getElementById('qpalette'); if(el) el.innerHTML=paletteHTML(); }
+function saveCurrentCode(){ try{ const id=curProblem&&curProblem.meta&&curProblem.meta.id; if(id) localStorage.setItem(codeKey(id, curLang||val('lang')), getCode()); }catch(e){} }
+function examGoto(i){ const t=window.__test; if(!t||i<0||i>=t.questions.length||i===t.idx) return; saveCurrentCode(); t.idx=i; advancing=true; loadExamQuestion(); }
+function examPrev(){ const t=window.__test; if(t) examGoto(t.idx-1); }
+function examNext(){ const t=window.__test; if(t) examGoto(t.idx+1); }
+function confirmFinishTest(){ const t=window.__test; if(!t) return;
+  if(!confirm(`Finish and submit the test? You've submitted ${t.answered.length} of ${t.questions.length} question(s). This cannot be undone.`)) return;
+  saveCurrentCode(); finishTest(false); }
 async function finishTest(auto){
   const t=window.__test; if(!t) return;
-  const testId=t.id, title=t.title, questions=t.questions;   // keep titles for the results table
+  const testId=t.id, title=t.title, questions=t.questions, reveal=t.reveal;   // keep for the results screen
   advancing=false;                                 // ensure the full exam teardown runs
   stopExam(); window.__test=null; window.__examKind=null;
   let body={};
   try{ const r=await apiPost('/api/test/finish',{ testId }); body=r.body||{}; }catch(e){}
   renderUserbar();
-  renderTestDone(Object.assign({ title, questions }, body));
+  renderTestDone(Object.assign({ title, questions, reveal }, body));
   if(auto) toast('⚠ Test auto-submitted after too many warnings');
 }
 function renderTestDone(d){
   stopTimer(); if(ME) renderUserbar();
+  const reveal = d.reveal || { showScore:true, showAnswers:false, showSolutions:false };
   const score=(d.score==null?0:d.score);
   const answers=d.answers||{}; const qmap={}; (d.questions||[]).forEach(q=>qmap[q.id]=q.title);
-  const rows=Object.keys(answers).length
-    ? Object.entries(answers).map(([qid,s])=>`<tr><td>${esc(qmap[qid]||qid)}</td><td>${s}/100</td></tr>`).join('')
-    : '<tr><td colspan="2" class="muted">No questions were answered.</td></tr>';
+  const scoreBlock = reveal.showScore
+    ? `<div style="font-size:52px;font-weight:800;margin:12px 0;color:var(--gold,#4f46e5)">${score}%</div>`
+    : `<p class="muted" style="margin:14px 0">Your responses have been recorded. Your score will be shared by your administrator.</p>`;
+  let detail='';
+  if(reveal.showAnswers){
+    const cols = reveal.showSolutions ? 3 : 2;
+    const rows=Object.keys(answers).length
+      ? Object.entries(answers).map(([qid,s])=>`<tr><td>${esc(qmap[qid]||qid)}</td><td>${s}/100</td>${reveal.showSolutions?`<td><button class="btn btn-ghost" style="padding:2px 10px" onclick="viewDoneSolution('${qid}',this)">Solution</button></td>`:''}</tr>`).join('')
+      : `<tr><td colspan="${cols}" class="muted">No questions were answered.</td></tr>`;
+    detail=`<table style="margin:6px auto 0;max-width:540px"><tr><th>Question</th><th>Score</th>${reveal.showSolutions?'<th></th>':''}</tr>${rows}</table>`;
+  } else if(reveal.showSolutions){
+    detail=(d.questions||[]).map(q=>`<div style="margin:6px 0"><b>${esc(q.title)}</b> <button class="btn btn-ghost" style="padding:2px 10px" onclick="viewDoneSolution('${q.id}',this)">Solution</button></div>`).join('');
+  }
   app.innerHTML=`<div class="test-top"><button class="btn btn-ghost" onclick="renderStudentTests()">← My Tests</button>
       <button class="btn btn-ghost" onclick="renderMyResults()">📊 My Results</button></div>
     <div class="card" style="text-align:center;padding:26px">
       <h1 style="margin:0">${esc(d.title||'Test')} — submitted</h1>
       <p class="muted" style="margin-top:4px">This test has been submitted and cannot be re-attempted.</p>
-      <div style="font-size:52px;font-weight:800;margin:12px 0;color:#e8a33d">${score}%</div>
-      <table style="margin:6px auto 0;max-width:460px"><tr><th>Question</th><th>Best score</th></tr>${rows}</table>
+      ${scoreBlock}
+      ${detail?`<div id="done-detail">${detail}</div>`:''}
     </div>`;
+}
+async function viewDoneSolution(id, btn){
+  const r=await fetch('/api/solution/'+id); const b=await r.json();
+  if(r.status!==200){ toast(b.error||'Solution not available'); return; }
+  const wrap=document.createElement('div'); wrap.style.textAlign='left'; wrap.style.marginTop='8px';
+  wrap.innerHTML=renderSolutions(b.solutions, b.timeComplexity, b.spaceComplexity);
+  const host=document.getElementById('done-detail')||btn.parentElement; host.appendChild(wrap); btn.remove();
 }
 async function renderMyResults(){
   stopTimer();
@@ -1291,6 +1357,76 @@ async function renderMyResults(){
   app.innerHTML=`<div class="test-top"><button class="btn btn-ghost" onclick="renderStudentTests()">← My Tests</button></div>
     <h1>My Test Results</h1><p class="muted">Scores from tests you have attempted.</p>
     <div class="card"><table><tr><th>Test</th><th>Score</th><th>Answered</th><th>Submitted</th></tr>${rows}</table></div>`;
+}
+
+// ---------- STAFF: PER-TEST ANALYTICS ----------
+async function renderStaffTests(){
+  stopTimer();
+  const list = await apiGet('/api/staff/tests');
+  const rows=(list||[]).map(t=>`<div class="card prow" onclick="renderTestAnalytics('${t.id}')">
+      <div><div class="t">${esc(t.title)}</div><div class="tags">${t.questionCount} question(s)${t.durationMin?(' · '+t.durationMin+' min'):''} · ${esc(t.availability||'open')}</div></div>
+      <span class="grow"></span><button class="btn btn-ghost">Analytics →</button></div>`).join('') || '<p class="muted">No tests yet.</p>';
+  app.innerHTML=`<h1>Test Analytics</h1><p class="muted">Pick a test to see who took it, their scores, and timings.</p>
+    <div class="plist" style="margin-top:14px">${rows}</div>`;
+}
+let __ta=null, __taSort={ key:'name', dir:1 };
+async function renderTestAnalytics(id){
+  stopTimer();
+  const d = await apiGet('/api/staff/test-analytics/'+id);
+  if(!d || !d.test){ toast('Could not load analytics'); return; }
+  __ta=d; __taSort={ key:'name', dir:1 };
+  const s=d.summary, t=d.test;
+  const tile=(v,l)=>`<div class="statcard" style="cursor:default"><div class="statval">${v}</div><div class="statlabel">${l}</div></div>`;
+  app.innerHTML=`<div class="test-top"><button class="btn btn-ghost" onclick="renderStaffTests()">← Tests</button></div>
+    <h1>${esc(t.title)} — analytics</h1>
+    <p class="muted">${t.questionCount} question(s)${t.durationMin?(' · '+t.durationMin+' min limit'):''} · ${esc(t.availability||'open')}</p>
+    <div class="statgrid" style="margin:14px 0">
+      ${tile(s.assigned,'Assigned')}${tile(s.started,'Started')}${tile(s.inProgress,'In progress')}${tile(s.submitted,'Submitted')}${tile(s.notStarted,'Not started')}
+    </div>
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+        <h2 style="margin:0">Students</h2><span class="grow"></span>
+        <input id="ta-filter" placeholder="Filter name / email / branch…" oninput="renderTaTable()" style="padding:8px 11px;border:1px solid var(--line);border-radius:9px;min-width:200px">
+        <select id="ta-status" onchange="renderTaTable()"><option value="">All statuses</option><option value="done">Submitted</option><option value="in_progress">In progress</option></select>
+        <button class="btn btn-ghost" onclick="exportTestAnalytics()">Export CSV</button>
+      </div>
+      <div style="overflow-x:auto"><div id="ta-table"></div></div>
+    </div>`;
+  renderTaTable();
+}
+function taSort(key){ if(__taSort.key===key) __taSort.dir*=-1; else { __taSort.key=key; __taSort.dir=1; } renderTaTable(); }
+function taTime(t){ return t? new Date(t).toLocaleString() : '—'; }
+function renderTaTable(){
+  if(!__ta) return;
+  const q=(val('ta-filter')||'').toLowerCase(), stf=val('ta-status');
+  let rows=(__ta.rows||[]).filter(r=> (!stf || r.status===stf) && (!q || (r.name+' '+r.email+' '+(r.branch||'')).toLowerCase().includes(q)));
+  const k=__taSort.key, dir=__taSort.dir;
+  rows=rows.slice().sort((a,b)=>{ let x=a[k], y=b[k]; if(x==null)x=''; if(y==null)y=''; if(typeof x==='string'||typeof y==='string') return dir*String(x).localeCompare(String(y)); return dir*((x||0)-(y||0)); });
+  const cols=[['name','Student'],['email','Email'],['branch','Branch'],['status','Status'],['score','Score'],['startedAt','Started'],['submittedAt','Submitted']];
+  const arrow=(key)=> __taSort.key===key ? (__taSort.dir>0?' ▲':' ▼') : '';
+  const head=cols.map(c=>`<th style="cursor:pointer;user-select:none" onclick="taSort('${c[0]}')">${c[1]}${arrow(c[0])}</th>`).join('')+'<th></th>';
+  const tid=__ta.test.id;
+  const body=rows.map(r=>`<tr>
+      <td>${esc(r.name)}</td><td>${esc(r.email)}</td><td>${esc(r.branch||'-')}</td>
+      <td>${r.status==='done'?'<span class="badge b-ready">Submitted</span>':'<span class="badge b-mod">In progress</span>'}</td>
+      <td>${r.score==null?'—':('<b>'+r.score+'%</b>')}</td>
+      <td>${taTime(r.startedAt)}</td><td>${taTime(r.submittedAt)}</td>
+      <td><button class="btn btn-ghost" style="padding:3px 10px" onclick="resetStudentTest('${r.userId}','${tid}','${esc(r.name).replace(/'/g,'')}')">Reset</button></td>
+    </tr>`).join('') || '<tr><td colspan="8" class="muted">No students match.</td></tr>';
+  document.getElementById('ta-table').innerHTML=`<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+async function resetStudentTest(userId, testId, name){
+  if(!confirm('Reset the test for "'+name+'"? Their current attempt is deleted and they can start from scratch.')) return;
+  const { status, body } = await apiPost('/api/staff/reset-attempt', { userId, testId });
+  if(status!==200){ toast(body.error||'Could not reset'); return; }
+  toast('Test reset for '+name+' ✓'); renderTestAnalytics(testId);
+}
+function exportTestAnalytics(){
+  if(!__ta) return;
+  const rows=(__ta.rows||[]).map(r=>({ Name:r.name, Email:r.email, Branch:r.branch||'',
+    Status:r.status==='done'?'Submitted':'In progress', Score:r.score==null?'':r.score,
+    Started:taTime(r.startedAt), Submitted:taTime(r.submittedAt) }));
+  downloadCSV((__ta.test.title||'test').replace(/[^\w]+/g,'_')+'_analytics.csv', rows);
 }
 
 

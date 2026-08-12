@@ -38,5 +38,8 @@ function finish(userId, testId) {
 }
 
 const listForUser = (userId) => db.prepare('SELECT * FROM test_attempts WHERE user_id=? ORDER BY started_at DESC').all(userId).map(row);
+const listForTest = (testId) => db.prepare('SELECT * FROM test_attempts WHERE test_id=? ORDER BY started_at').all(testId).map(row);
+// Reset a student's attempt so they can take the test from scratch.
+const remove = (userId, testId) => db.prepare('DELETE FROM test_attempts WHERE user_id=? AND test_id=?').run(userId, testId).changes > 0;
 
-module.exports = { get, start, recordAnswer, finish, listForUser };
+module.exports = { get, start, recordAnswer, finish, listForUser, listForTest, remove };
