@@ -435,7 +435,8 @@ function startTimer(){
 function verdictRow(r){ const cls=r.verdict==='Accepted'?'ok':'bad'; const name=r.hidden?'Hidden test '+r.index:'Sample test '+r.index;
   const t = r.timeMs!=null?` <span class="muted">· ${r.timeMs} ms</span>`:'';
   let extra=''; if(r.verdict!=='Accepted' && r.got!==undefined) extra=` <span class="muted">got "${esc((r.got||'').trim().slice(0,80))}", expected "${esc((r.expected||'').trim().slice(0,80))}"</span>`;
-  return `<div class="row"><span class="dot ${cls}"></span>${name}: <b>&nbsp;${esc(r.verdict)}</b>${t}${extra}</div>`; }
+  const err = (r.verdict!=='Accepted' && r.stderr) ? `<pre class="code" style="margin:3px 0 7px;max-height:140px;font-size:11.5px;white-space:pre-wrap">${esc(String(r.stderr).slice(0,600))}</pre>` : '';
+  return `<div class="row"><span class="dot ${cls}"></span>${name}: <b>&nbsp;${esc(r.verdict)}</b>${t}${extra}</div>${err}`; }
 // Rich per-case card for the submission dashboard (#6 hidden review, #11, #12 runtime).
 function caseCard(r){
   const ok = r.verdict==='Accepted';
