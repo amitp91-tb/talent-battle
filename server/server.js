@@ -453,7 +453,8 @@ async function handleApi(req, res, url) {
         marks: t.marks, marksMax, marksEarned: attempts.marksEarned(done ? done.answers : {}, t.marks) });
     }
     return sendJSON(res, 200, { status: 'in_progress', title: t.title, questions,
-      answered: Object.keys(a.answers), deadline, durationMin, reveal, marks: t.marks, marksMax, now: Date.now() });
+      answered: Object.keys(a.answers), deadline, durationMin, reveal, marks: t.marks, marksMax,
+      requireCamera: !!t.requireCamera, startedAt: a.startedAt, now: Date.now() });
   }
   // ---- TEST SITTING: finish (student submits the whole test, or auto-submit) ----
   if (req.method === 'POST' && url === '/api/test/finish') {
@@ -815,6 +816,16 @@ async function handleApi(req, res, url) {
       catch (e) { return sendJSON(res, 400, { error: e.message }); }
     }
     const tm = url.match(/^\/api\/admin\/tests\/([^/]+)$/);
+    if (req.method === 'GET' && tm) {
+      const t = tests.getById(tm[1]);
+      return t ? sendJSON(res, 200, { test: t }) : sendJSON(res, 404, { error: 'not found' });
+    }
+    if (req.method === 'POST' && tm) {
+      const b = await readBody(req);
+      try { const t = tests.update(tm[1], b);
+        return t ? sendJSON(res, 200, { test: { id: t.id, title: t.title } }) : sendJSON(res, 404, { error: 'not found' }); }
+      catch (e) { return sendJSON(res, 400, { error: e.message }); }
+    }
     if (req.method === 'DELETE' && tm) return sendJSON(res, 200, { ok: tests.remove(tm[1]) });
 
     // ---- RESET A USER'S PASSWORD (admin) ----

@@ -78,6 +78,7 @@ addColumn('tests','show_score','INTEGER');        // reveal after submit
 addColumn('tests','show_answers','INTEGER');
 addColumn('tests','show_solutions','INTEGER');
 addColumn('tests','marks','TEXT');                // optional per-question marks {qid: marks}
+addColumn('tests','require_camera','INTEGER');    // 1 = webcam required to start the test
 addColumn('batches','features','TEXT');
 
 const J = (v) => JSON.stringify(v == null ? [] : v);

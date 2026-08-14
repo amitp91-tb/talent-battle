@@ -4,7 +4,14 @@ const userbar = document.getElementById('userbar');
 let ME = null, LANGS = { available:{}, labels:{} }, PROBLEMS = [], timer = null, contestTimer = null, examMode = false, examSession = false, examKind = null, cam = null, advancing = false, curLang = null, langCode = {};
 // Saved-code key is per USER + problem + language, so a shared/lab computer never
 // shows one student's code to the next, and each language keeps its own code.
-function codeKey(id, lang){ return 'tb_code_' + ((ME && ME.id) || 'anon') + '_' + id + '_' + lang; }
+function codeKey(id, lang){
+  // Scope a test question's saved code to THIS attempt (startedAt) so that after
+  // a staff reset the student gets a fresh editor instead of their old code.
+  let scope = '';
+  const t = window.__test;
+  if(t && t.startedAt && Array.isArray(t.questions) && t.questions.some(q=>q.id===id)) scope = '_a'+t.startedAt;
+  return 'tb_code_' + ((ME && ME.id) || 'anon') + '_' + id + '_' + lang + scope;
+}
 function clearSavedCode(){ try{ Object.keys(localStorage).filter(k=>k.indexOf('tb_code_')===0).forEach(k=>localStorage.removeItem(k)); }catch(e){} }
 
 const starters = {
@@ -1144,6 +1151,7 @@ async function renderAdminTests(){
         <div class="tags">${t.questionCount} question(s) · ${t.batchNames.length?('for '+t.batchNames.map(esc).join(', ')):'all batches'}</div></div>
       <span class="grow"></span>
       <button class="btn btn-ghost" onclick="renderTestAnalytics('${t.id}')">Analytics</button>
+      <button class="btn btn-ghost" onclick="renderTestForm('${t.id}')">Edit</button>
       <button class="btn btn-ghost" onclick="delTest('${t.id}', this)">Delete</button>
     </div>`).join('') || '<p class="muted">No tests yet. Create one to bundle questions together.</p>';
   app.innerHTML = `<div style="display:flex;align-items:center;gap:12px">
@@ -1157,48 +1165,66 @@ async function delTest(id, btn){
   if(!confirm('Delete "'+title+'"?')) return;
   await fetch('/api/admin/tests/'+id, { method:'DELETE' }); renderAdminTests();
 }
-async function renderTestForm(){
+async function renderTestForm(testId){
   stopTimer();
-  const [questions, batches] = await Promise.all([apiGet('/api/admin/questions'), apiGet('/api/admin/batches')]);
-  const qChecks = questions.length ? questions.map(q=>`<label class="chk"><input type="checkbox" class="q-pick" value="${q.id}"> ${esc(q.title)} <span class="muted">(${esc(q.difficulty)})</span><input type="number" min="1" value="10" class="q-marks" data-q="${q.id}" title="marks" onclick="event.stopPropagation()" style="width:58px;display:none;margin-left:8px"></label>`).join('')
-    : '<span class="muted">No questions yet — create some in the Questions tab.</span>';
-  const bChecks = batches.length ? batches.map(b=>`<label class="chk"><input type="checkbox" class="b-pick" value="${b.id}"> ${esc(b.name)}</label>`).join('')
+  const reqs = [apiGet('/api/admin/questions'), apiGet('/api/admin/batches')];
+  if(testId) reqs.push(apiGet('/api/admin/tests/'+testId));
+  const [questions, batches, exWrap] = await Promise.all(reqs);
+  const ex = (exWrap && exWrap.test) ? exWrap.test : null;
+  const editing = !!ex;
+  const useMarks = editing && ex.marks && Object.keys(ex.marks).length>0;
+  const has = (arr, v)=> Array.isArray(arr) && arr.includes(v);
+  const qChecks = questions.length ? questions.map(q=>{
+    const picked = editing && has(ex.questionIds, q.id);
+    const mval = (editing && ex.marks && ex.marks[q.id]) ? ex.marks[q.id] : 10;
+    return `<label class="chk"><input type="checkbox" class="q-pick" value="${q.id}"${picked?' checked':''}> ${esc(q.title)} <span class="muted">(${esc(q.difficulty)})</span><input type="number" min="1" value="${mval}" class="q-marks" data-q="${q.id}" title="marks" onclick="event.stopPropagation()" style="width:58px;display:${useMarks?'inline-block':'none'};margin-left:8px"></label>`;
+  }).join('') : '<span class="muted">No questions yet — create some in the Questions tab.</span>';
+  const bChecks = batches.length ? batches.map(b=>`<label class="chk"><input type="checkbox" class="b-pick" value="${b.id}"${editing&&has(ex.batchIds,b.id)?' checked':''}> ${esc(b.name)}</label>`).join('')
     : '<span class="muted">No batches yet.</span>';
+  const scheduled = editing && ex.availability==='scheduled';
+  const startLocal = (scheduled && ex.startAt) ? toLocalInput(ex.startAt) : '';
+  const ck = (v)=> v?' checked':'';
   app.innerHTML = `<div class="test-top"><button class="btn btn-ghost" onclick="renderAdminTests()">← Tests</button></div>
-    <h1>New test / challenge</h1><div id="terr" class="err"></div>
+    <h1>${editing?'Edit test':'New test / challenge'}</h1><div id="terr" class="err"></div>
     <div class="card">
-      <div class="field"><label>Title</label><input id="t-title" placeholder="Week 1 — Arrays & Strings"></div>
-      <div class="field"><label>Description (optional)</label><textarea id="t-desc" style="height:70px"></textarea></div>
-      <div class="field"><label>Time limit (minutes)</label><input id="t-duration" type="number" min="0" value="30" style="max-width:160px"><span class="muted" style="margin-left:8px;font-size:12px">Whole test is one timed sitting. 0 = no limit.</span></div>
+      <div class="field"><label>Title</label><input id="t-title" placeholder="Week 1 — Arrays & Strings" value="${editing?esc(ex.title):''}"></div>
+      <div class="field"><label>Description (optional)</label><textarea id="t-desc" style="height:70px">${editing?esc(ex.description||''):''}</textarea></div>
+      <div class="field"><label>Time limit (minutes)</label><input id="t-duration" type="number" min="0" value="${editing?(ex.durationMin||0):30}" style="max-width:160px"><span class="muted" style="margin-left:8px;font-size:12px">Whole test is one timed sitting. 0 = no limit.</span></div>
       <h2 style="margin-top:14px">Availability</h2>
       <div class="checks" style="margin-bottom:8px">
-        <label class="chk"><input type="radio" name="t-avail" value="open" checked onchange="onAvailChange()"> Open — students can take it anytime</label>
-        <label class="chk"><input type="radio" name="t-avail" value="scheduled" onchange="onAvailChange()"> Scheduled — only on/after a date &amp; time</label>
+        <label class="chk"><input type="radio" name="t-avail" value="open"${scheduled?'':' checked'} onchange="onAvailChange()"> Open — students can take it anytime</label>
+        <label class="chk"><input type="radio" name="t-avail" value="scheduled"${scheduled?' checked':''} onchange="onAvailChange()"> Scheduled — only on/after a date &amp; time</label>
       </div>
       <div class="split">
-        <div class="field" id="t-startwrap" style="display:none"><label>Starts on (date &amp; time)</label><input id="t-start" type="datetime-local"></div>
-        <div class="field"><label>Open for (hours)</label><input id="t-hours" type="number" min="0" value="0" style="max-width:160px"><span class="muted" style="margin-left:8px;font-size:12px">Auto-closes this many hours after it opens. 0 = never closes.</span></div>
+        <div class="field" id="t-startwrap" style="display:${scheduled?'block':'none'}"><label>Starts on (date &amp; time)</label><input id="t-start" type="datetime-local" value="${startLocal}"></div>
+        <div class="field"><label>Open for (hours)</label><input id="t-hours" type="number" min="0" value="${editing?(ex.openHours||0):0}" style="max-width:160px"><span class="muted" style="margin-left:8px;font-size:12px">Auto-closes this many hours after it opens. 0 = never closes.</span></div>
+      </div>
+      <h2 style="margin-top:14px">Proctoring</h2>
+      <div class="checks">
+        <label class="chk"><input type="checkbox" id="t-require-cam"${ck(editing?ex.requireCamera:1)}> Require webcam <span class="muted" style="margin-left:4px">(if off, the test starts without a camera; full-screen &amp; tab/paste monitoring still apply)</span></label>
       </div>
       <h2 style="margin-top:14px">After a student submits, show them:</h2>
       <div class="checks">
-        <label class="chk"><input type="checkbox" id="t-show-score" checked> Their score</label>
-        <label class="chk"><input type="checkbox" id="t-show-answers"> Which cases passed/failed</label>
-        <label class="chk"><input type="checkbox" id="t-show-solutions"> The model solution</label>
+        <label class="chk"><input type="checkbox" id="t-show-score"${ck(editing?ex.showScore:1)}> Their score</label>
+        <label class="chk"><input type="checkbox" id="t-show-answers"${ck(editing?ex.showAnswers:0)}> Which cases passed/failed</label>
+        <label class="chk"><input type="checkbox" id="t-show-solutions"${ck(editing?ex.showSolutions:0)}> The model solution</label>
       </div>
       <h2 style="margin-top:14px">Pick questions</h2>
-      <label class="chk" style="margin-bottom:10px"><input type="checkbox" id="t-use-marks" onchange="onUseMarksChange()"> Assign question-wise marks <span class="muted" style="margin-left:4px">(otherwise all questions are weighted equally)</span></label>
+      <label class="chk" style="margin-bottom:10px"><input type="checkbox" id="t-use-marks"${ck(useMarks)} onchange="onUseMarksChange()"> Assign question-wise marks <span class="muted" style="margin-left:4px">(otherwise all questions are weighted equally)</span></label>
       <div class="checks">${qChecks}</div>
       <h2 style="margin-top:16px">Assign to batches</h2>
       <p class="muted" style="margin-top:0">Leave all unchecked to show this test to every student.</p>
       <div class="checks">${bChecks}</div>
-      <div style="margin-top:16px"><button class="btn btn-primary" onclick="submitTest()">Create test</button></div>
+      <div style="margin-top:16px"><button class="btn btn-primary" onclick="submitTest('${editing?ex.id:''}')">${editing?'Save changes':'Create test'}</button></div>
     </div>`;
 }
+// ms epoch -> value for <input type="datetime-local"> in local time
+function toLocalInput(ms){ const d=new Date(ms - new Date(ms).getTimezoneOffset()*60000); return d.toISOString().slice(0,16); }
 function onAvailChange(){ const sched=(document.querySelector('input[name="t-avail"]:checked')||{}).value==='scheduled';
   const w=document.getElementById('t-startwrap'); if(w) w.style.display=sched?'block':'none'; }
 function onUseMarksChange(){ const on=document.getElementById('t-use-marks').checked;
   document.querySelectorAll('.q-marks').forEach(el=>el.style.display=on?'inline-block':'none'); }
-async function submitTest(){
+async function submitTest(testId){
   const questionIds = [...document.querySelectorAll('.q-pick:checked')].map(x=>x.value);
   const batchIds = [...document.querySelectorAll('.b-pick:checked')].map(x=>x.value);
   const availability = (document.querySelector('input[name="t-avail"]:checked')||{}).value || 'open';
@@ -1209,12 +1235,13 @@ async function submitTest(){
   if(document.getElementById('t-use-marks') && document.getElementById('t-use-marks').checked){
     [...document.querySelectorAll('.q-marks')].forEach(el=>{ if(questionIds.includes(el.dataset.q)){ const v=Number(el.value)||0; if(v>0) marks[el.dataset.q]=v; } });
   }
-  const { status, body } = await apiPost('/api/admin/tests',
-    { title:val('t-title'), description:val('t-desc'), durationMin:val('t-duration'),
+  const payload = { title:val('t-title'), description:val('t-desc'), durationMin:val('t-duration'),
       availability, startAt, openHours:val('t-hours'),
+      requireCamera:document.getElementById('t-require-cam').checked,
       showScore:document.getElementById('t-show-score').checked, showAnswers:document.getElementById('t-show-answers').checked, showSolutions:document.getElementById('t-show-solutions').checked,
-      marks, questionIds, batchIds });
-  if(status!==200){ document.getElementById('terr').textContent = body.error||'Could not create test'; return; }
+      marks, questionIds, batchIds };
+  const { status, body } = await apiPost(testId ? ('/api/admin/tests/'+testId) : '/api/admin/tests', payload);
+  if(status!==200){ document.getElementById('terr').textContent = body.error||'Could not save test'; return; }
   renderAdminTests();
 }
 
@@ -1251,13 +1278,14 @@ async function openTest(id){
   window.__examKind='test';
   const answered=(body.answered||[]), qs=(body.questions||[]);
   let idx=qs.findIndex(q=>!answered.includes(q.id)); if(idx<0) idx=0;
-  window.__test={ id, title:body.title, questions:qs, answered:answered.slice(), idx, deadline:body.deadline||0, reveal:body.reveal||{showScore:true} };
+  window.__test={ id, title:body.title, questions:qs, answered:answered.slice(), idx, deadline:body.deadline||0, reveal:body.reveal||{showScore:true}, startedAt:body.startedAt||0, requireCamera:body.requireCamera!==false };
   window.__examBack=()=>renderStudentTests();
-  renderExamGate(body.title, { resuming: answered.length>0, deadline: body.deadline||0, durationMin: body.durationMin||0 });
+  renderExamGate(body.title, { resuming: answered.length>0, deadline: body.deadline||0, durationMin: body.durationMin||0, requireCamera: body.requireCamera!==false });
 }
 function renderExamGate(title, opts){
   opts = opts || {};
   const isTest = (window.__examKind||'')==='test';
+  const camReq = isTest && opts.requireCamera !== false;
   const remainMin = opts.deadline ? Math.max(0, Math.ceil((opts.deadline - Date.now())/60000)) : 0;
   const timeLine = isTest ? (opts.deadline
       ? `<p style="margin:6px 0 0;font-weight:700">${opts.resuming?'This test is already running':'Time limit'}: ${remainMin} minute(s) ${opts.resuming?'left':''}</p>`
@@ -1269,13 +1297,13 @@ function renderExamGate(title, opts){
     ${timeLine}
     <ul class="examrules">
       <li>The test runs in <b>full screen</b>. Leaving full screen or switching tab is a <b>violation</b> and is recorded.</li>
-      ${isTest?'<li>Your <b>webcam</b> is monitored — keep your face visible and the camera uncovered.</li>':''}
+      ${camReq?'<li>Your <b>webcam</b> is monitored — keep your face visible and the camera uncovered.</li>':''}
       ${isTest?'<li><b>Copy, paste, right-click and the back button are disabled.</b> Questions appear one at a time — you cannot go back.</li>':'<li>Do not switch tabs or exit full screen — each time is recorded.</li>'}
       ${isTest?'<li>After <b>4 violations the test ends automatically</b>, keeping whatever you have submitted. It cannot be restarted.</li>':''}
       <li>Submitting ends the test.</li>
     </ul>
     <div id="gate-err" class="err"></div>
-    <button class="btn btn-primary" onclick="beginExam()">${isTest?(opts.resuming?'Resume test':'Allow camera &amp; start'):'Start in Full Screen'}</button>
+    <button class="btn btn-primary" onclick="beginExam()">${isTest?(opts.resuming?'Resume test':(camReq?'Allow camera &amp; start':'Start test')):'Start in Full Screen'}</button>
     <button class="btn btn-ghost" style="margin-left:8px" onclick="examCancel()">Cancel</button>
   </div></div>`;
 }
@@ -1789,12 +1817,14 @@ async function openExamProblem(id){
   const d=await r.json(); window.__examDetail=d;
   renderExamGate(d.meta.title);
 }
+// Is the webcam required for the current test? (default yes; admin can turn it off per test)
+function camRequired(){ return (window.__examKind||'')==='test' && !(window.__test && window.__test.requireCamera===false); }
 async function beginExam(){
   const el=document.documentElement;
   const req=el.requestFullscreen||el.webkitRequestFullscreen||el.msRequestFullscreen;
   if(req){ try{ req.call(el); }catch(e){} }            // synchronous — uses the click gesture
-  if((window.__examKind||'')==='test'){
-    // Camera is required. Acquire it now (this click is the permission gesture).
+  if((window.__examKind||'')==='test' && camRequired()){
+    // Camera is required for this test. Acquire it now (this click is the permission gesture).
     try{ (cam=cam||{}).stream = await navigator.mediaDevices.getUserMedia({ video:{width:320,height:240}, audio:false }); }
     catch(e){ const err=document.getElementById('gate-err');
       if(err) err.textContent='Camera access is required for this test — please allow it and click Start again.';
@@ -1818,7 +1848,7 @@ function startExam(){
     document.addEventListener('dragstart', preventSelect, true);
     document.addEventListener('keydown', blockKeys, true);
     window.addEventListener('blur', onExamBlur);
-    startCam(false);
+    if(camRequired()) startCam(false);
   }
 }
 function stopExam(){
