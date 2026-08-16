@@ -42,6 +42,15 @@ function detectLanguages() {
   return available;
 }
 const AVAILABLE = detectLanguages();
+// Re-probe a language on demand if it looks unavailable. Guards against a one-time
+// boot-probe failure (a transient PATH/overload hiccup at a pm2 auto-restart) that
+// would otherwise mark a language "not installed" for the whole life of the process
+// — silently breaking, e.g., every Python submission until someone restarts.
+function isAvailable(lang) {
+  if (AVAILABLE[lang]) return true;
+  const cfg = LANGUAGES[lang]; if (!cfg) return false;
+  try { execSync(cfg.probe, { stdio: 'ignore' }); AVAILABLE[lang] = true; return true; } catch { return false; }
+}
 
 // ---- helpers ----
 function sendJSON(res, code, obj, headers = {}) {
@@ -248,7 +257,7 @@ async function handleApi(req, res, url) {
     if (isSubmit && !me) return sendJSON(res, 401, { error: 'Please log in to submit.' });
     const body = await readBody(req);
     const q = findProblem(body.problemId); if (!q) return sendJSON(res, 404, { error: 'unknown problem' });
-    if (!AVAILABLE[body.language]) return sendJSON(res, 200, { overall: 'Language Unavailable', passed: 0, total: 0,
+    if (!isAvailable(body.language)) return sendJSON(res, 200, { overall: 'Language Unavailable', passed: 0, total: 0,
       results: [], note: `${LANGUAGES[body.language]?.label || body.language} is not installed on this machine.` });
     const all = store.toTestCases(q);
     const cases = isSubmit ? all : all.filter((t) => !t.hidden);
@@ -307,7 +316,7 @@ async function handleApi(req, res, url) {
   if (req.method === 'POST' && url === '/api/run-custom') {
     const me = currentUser(req); if (!me) return sendJSON(res, 401, { error: 'login required' });
     const b = await readBody(req);
-    if (!AVAILABLE[b.language]) return sendJSON(res, 200, { overall: 'Language Unavailable',
+    if (!isAvailable(b.language)) return sendJSON(res, 200, { overall: 'Language Unavailable',
       note: `${LANGUAGES[b.language]?.label || b.language} is not installed on this server.` });
     let result;
     try {
@@ -434,17 +443,25 @@ async function handleApi(req, res, url) {
     const questions = t.questionIds.map((qid) => store.getById(qid)).filter(Boolean)
       .map((q) => ({ id: q.id, title: q.title, difficulty: q.difficulty, tags: q.tags, marks: t.marks[q.id] || null }));
     const reveal = { showScore: !!t.showScore, showAnswers: !!t.showAnswers, showSolutions: !!t.showSolutions };
+    const durationMin = t.durationMin || 0;
     const existing = attempts.get(me.id, t.id);
     if (existing && existing.status === 'done')
       return sendJSON(res, 200, { status: 'done', score: existing.score, answers: existing.answers,
         title: t.title, questions, reveal, marks: t.marks, marksMax, marksEarned: attempts.marksEarned(existing.answers, t.marks), submittedAt: existing.submittedAt });
+    // PREVIEW the gate WITHOUT starting the clock. The student hasn't pressed Start
+    // (begin) yet and no attempt exists — the timer must not run while they read the
+    // instructions or grant camera access. The clock starts only on begin (below).
+    if (!existing && !b.begin) {
+      const w = tests.windowStatus(t);
+      return sendJSON(res, 200, { status: 'ready', title: t.title, questions, reveal, marks: t.marks, marksMax,
+        requireCamera: !!t.requireCamera, durationMin, windowState: w.state, opensAt: w.opensAt, closesAt: w.closesAt, now: Date.now() });
+    }
     // Enforce the availability window for a NEW start (a resume/completed view is always allowed).
     if (!existing) { const w = tests.windowStatus(t);
       if (w.state === 'upcoming') return sendJSON(res, 403, { error: 'This test has not started yet. It opens at ' + new Date(w.opensAt).toLocaleString() + '.' });
       if (w.state === 'closed') return sendJSON(res, 403, { error: 'This test is now closed and can no longer be started.' });
     }
     const a = attempts.start(me.id, t.id, questions.length);
-    const durationMin = t.durationMin || 0;
     const deadline = durationMin > 0 ? (a.startedAt + durationMin * 60000) : 0;
     // Time is up on re-open: finish and show the score (no fresh timer on restart).
     if (deadline && Date.now() >= deadline) {
@@ -620,7 +637,7 @@ async function handleApi(req, res, url) {
     const q = store.getById(b.qid); if (!q) return sendJSON(res, 404, { error: 'unknown question' });
     const sub = auth.latestSubmission(target.id, b.qid);
     if (!sub || !sub.code) return sendJSON(res, 200, { overall: 'No submission', results: [] });
-    if (!AVAILABLE[sub.language]) return sendJSON(res, 200, { overall: 'Language Unavailable', results: [], note: `${sub.language} is not installed here.` });
+    if (!isAvailable(sub.language)) return sendJSON(res, 200, { overall: 'Language Unavailable', results: [], note: `${sub.language} is not installed here.` });
     const cases = store.toTestCases(q);
     let effCode = sub.code;
     if (q.mode === 'function' && q.harness && q.harness[sub.language] && q.harness[sub.language].driver)

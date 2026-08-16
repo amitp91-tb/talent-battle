@@ -1289,7 +1289,9 @@ function renderExamGate(title, opts){
   const remainMin = opts.deadline ? Math.max(0, Math.ceil((opts.deadline - Date.now())/60000)) : 0;
   const timeLine = isTest ? (opts.deadline
       ? `<p style="margin:6px 0 0;font-weight:700">${opts.resuming?'This test is already running':'Time limit'}: ${remainMin} minute(s) ${opts.resuming?'left':''}</p>`
-      : '<p class="muted" style="margin:6px 0 0">No time limit.</p>') : '';
+      : (opts.durationMin
+        ? `<p style="margin:6px 0 0;font-weight:700">Time limit: ${opts.durationMin} minute(s) — your timer starts only when you press Start.</p>`
+        : '<p class="muted" style="margin:6px 0 0">No time limit.</p>')) : '';
   app.innerHTML=`<div class="examgate"><div class="examgate-card">
     <div class="auth-logo"></div>
     <h1 style="margin:12px 0 2px">Proctored Test</h1>
@@ -1830,6 +1832,22 @@ async function beginExam(){
       if(err) err.textContent='Camera access is required for this test — please allow it and click Start again.';
       try{ if(document.fullscreenElement && document.exitFullscreen) document.exitFullscreen(); }catch(_){}
       return; }
+  }
+  // START THE CLOCK NOW — not when the student clicked "Open". Only at this point,
+  // after full screen + camera are granted, does the attempt (and its timer) begin.
+  if((window.__examKind||'')==='test' && window.__test){
+    const { status, body } = await apiPost('/api/test/start', { testId: window.__test.id, begin:true });
+    if(status!==200){ const err=document.getElementById('gate-err');
+      if(err) err.textContent = body.error || 'Could not start the test. Please try again.';
+      stopCam(); try{ if(document.fullscreenElement && document.exitFullscreen) document.exitFullscreen(); }catch(_){}
+      return; }
+    if(body.status==='done'){ stopCam(); try{ if(document.fullscreenElement && document.exitFullscreen) document.exitFullscreen(); }catch(_){}
+      renderTestDone(body); return; }
+    window.__test.deadline = body.deadline||0;
+    window.__test.startedAt = body.startedAt||0;
+    if(Array.isArray(body.questions) && body.questions.length) window.__test.questions = body.questions;
+    window.__test.answered = (body.answered||window.__test.answered||[]).slice();
+    let idx=window.__test.questions.findIndex(q=>!window.__test.answered.includes(q.id)); if(idx<0) idx=0; window.__test.idx=idx;
   }
   window.__autoSubmitting=false;
   examMode=true; examKind=window.__examKind||'test';
