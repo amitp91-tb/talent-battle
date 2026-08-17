@@ -603,16 +603,23 @@ async function handleApi(req, res, url) {
     let assignedStudents = auth.allUsers().filter((u) => u.role === 'student'
       && (t.batchIds.length === 0 || t.batchIds.includes(u.batchId)) && inScope(u));
     const mMax = tests.marksMax(t);
+    const durationMin = t.durationMin || 0;
+    // Did the student ever submit real code for ANY question in this test?
+    const hasCode = (uid) => t.questionIds.some((qid) => { const s = auth.latestSubmission(uid, qid); return !!(s && s.code && String(s.code).trim()); });
+    // Is the sitting over (submitted, or the personal timer has elapsed)?
+    const sittingOver = (a) => a.status === 'done' || (durationMin > 0 && Date.now() >= a.startedAt + durationMin * 60000);
     const rows = attempts.listForTest(t.id).map((a) => { const u = auth.findById(a.userId); return { a, u }; })
       .filter((x) => x.u && x.u.role === 'student' && inScope(x.u))
-      .map(({ a, u }) => ({ userId: u.id, name: u.name, email: u.email, branch: u.branch || '', batch: u.batch || '',
+      .map(({ a, u }) => { const hc = hasCode(u.id); const phantom = !hc && sittingOver(a);
+        return { userId: u.id, name: u.name, email: u.email, branch: u.branch || '', batch: u.batch || '',
         status: a.status, score: a.status === 'done' ? a.score : null, total: a.total, answered: Object.keys(a.answers).length,
-        marks: mMax ? attempts.marksEarned(a.answers, t.marks) : null,
-        startedAt: a.startedAt, submittedAt: a.status === 'done' ? a.submittedAt : null }));
+        marks: mMax ? attempts.marksEarned(a.answers, t.marks) : null, noCode: !hc, phantom,
+        startedAt: a.startedAt, submittedAt: a.status === 'done' ? a.submittedAt : null }; });
     const started = rows.length, submitted = rows.filter((r) => r.status === 'done').length;
+    const phantom = rows.filter((r) => r.phantom).length;
     return sendJSON(res, 200, {
       test: { id: t.id, title: t.title, questionCount: t.questionIds.length, durationMin: t.durationMin, availability: t.availability, marksMax: mMax },
-      summary: { assigned: assignedStudents.length, started, inProgress: started - submitted, submitted, notStarted: Math.max(0, assignedStudents.length - started) },
+      summary: { assigned: assignedStudents.length, started, inProgress: started - submitted, submitted, notStarted: Math.max(0, assignedStudents.length - started), phantom },
       rows,
     });
   }
@@ -656,6 +663,27 @@ async function handleApi(req, res, url) {
     const target = auth.findById(b.userId); if (!target) return sendJSON(res, 404, { error: 'student not found' });
     if (me.role === 'subadmin' && !(me.assignedBatches || []).includes(target.batchId)) return sendJSON(res, 403, { error: 'not your student' });
     return sendJSON(res, 200, { ok: attempts.remove(b.userId, String(b.testId || '')) });
+  }
+  // ---- STAFF: bulk-reset every "phantom" attempt in a test (sitting over, no code
+  //      ever submitted) so students wrongly locked out can retake. Never touches an
+  //      attempt that has real code or a live sitting. ----
+  const rez = url.match(/^\/api\/staff\/reset-empty\/([^/]+)$/);
+  if (req.method === 'POST' && rez) {
+    const me = currentUser(req); if (!isStaff(me)) return sendJSON(res, 403, { error: 'staff only' });
+    const t = tests.getById(rez[1]); if (!t) return sendJSON(res, 404, { error: 'unknown test' });
+    const assigned = me.assignedBatches || [];
+    if (me.role === 'subadmin' && !(t.batchIds.length === 0 || t.batchIds.some((b) => assigned.includes(b))))
+      return sendJSON(res, 403, { error: 'not your test' });
+    const inScope = (u) => me.role === 'admin' ? true : assigned.includes(u.batchId);
+    const durationMin = t.durationMin || 0;
+    const hasCode = (uid) => t.questionIds.some((qid) => { const s = auth.latestSubmission(uid, qid); return !!(s && s.code && String(s.code).trim()); });
+    const sittingOver = (a) => a.status === 'done' || (durationMin > 0 && Date.now() >= a.startedAt + durationMin * 60000);
+    let reset = 0;
+    for (const a of attempts.listForTest(t.id)) {
+      const u = auth.findById(a.userId); if (!u || u.role !== 'student' || !inScope(u)) continue;
+      if (!hasCode(u.id) && sittingOver(a) && attempts.remove(u.id, t.id)) reset++;
+    }
+    return sendJSON(res, 200, { reset });
   }
 
   // ---- GROUP-WISE ANALYTICS (staff; scoped for sub-admin) ----

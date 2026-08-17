@@ -1423,6 +1423,11 @@ async function renderTestAnalytics(id){
     <div class="statgrid" style="margin:14px 0">
       ${tile(s.assigned,'Assigned')}${tile(s.started,'Started')}${tile(s.inProgress,'In progress')}${tile(s.submitted,'Submitted')}${tile(s.notStarted,'Not started')}
     </div>
+    ${s.phantom>0?`<div class="card" style="border-left:4px solid #d97706;background:#fffbeb;margin-bottom:14px">
+      <b>⚠ ${s.phantom} student(s) never submitted any code but were auto-closed</b>
+      <p class="muted" style="margin:6px 0 10px">These were locked out without an attempt (an old timing issue). Resetting lets them retake — it never touches anyone who wrote code or scored above 0.</p>
+      <button class="btn btn-primary" onclick="resetEmptyAttempts('${t.id}',${s.phantom})">Reset all ${s.phantom} who never submitted code</button>
+    </div>`:''}
     <div class="card">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">
         <h2 style="margin:0">Students</h2><span class="grow"></span>
@@ -1453,7 +1458,7 @@ function renderTaTable(){
   const body=rows.map(r=>`<tr>
       <td>${esc(r.name)}</td><td>${esc(r.email)}</td><td>${esc(r.branch||'-')}</td>
       <td>${r.status==='done'?'<span class="badge b-ready">Submitted</span>':'<span class="badge b-mod">In progress</span>'}</td>
-      <td>${r.score==null?'—':('<b>'+r.score+'%</b>')}</td>
+      <td>${r.score==null?'—':('<b>'+r.score+'%</b>')}${r.phantom?' <span class="badge b-imp" title="Auto-closed with no code submitted">no code</span>':''}</td>
       ${mMax?`<td>${r.marks==null?'—':('<b>'+r.marks+'</b>/'+mMax)}</td>`:''}
       <td>${taTime(r.startedAt)}</td><td>${taTime(r.submittedAt)}</td>
       <td style="white-space:nowrap">
@@ -1502,11 +1507,17 @@ async function resetStudentTest(userId, testId, name){
   if(status!==200){ toast(body.error||'Could not reset'); return; }
   toast('Test reset for '+name+' ✓'); renderTestAnalytics(testId);
 }
+async function resetEmptyAttempts(testId, n){
+  if(!confirm('Reset all '+n+' student(s) who were auto-closed without submitting any code?\n\nThey will be able to retake the test. Students who wrote code or scored above 0 are NOT affected.')) return;
+  const { status, body } = await apiPost('/api/staff/reset-empty/'+testId, {});
+  if(status!==200){ toast((body&&body.error)||'Could not reset'); return; }
+  toast((body.reset||0)+' student(s) reset ✓'); renderTestAnalytics(testId);
+}
 function exportTestAnalytics(){
   if(!__ta) return;
   const rows=(__ta.rows||[]).map(r=>({ Name:r.name, Email:r.email, Branch:r.branch||'',
     Status:r.status==='done'?'Submitted':'In progress', Score:r.score==null?'':r.score,
-    Started:taTime(r.startedAt), Submitted:taTime(r.submittedAt) }));
+    NoCodeSubmitted:r.phantom?'YES':'', Started:taTime(r.startedAt), Submitted:taTime(r.submittedAt) }));
   downloadCSV((__ta.test.title||'test').replace(/[^\w]+/g,'_')+'_analytics.csv', rows);
 }
 
