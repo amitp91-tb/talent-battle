@@ -80,6 +80,8 @@ addColumn('tests','show_solutions','INTEGER');
 addColumn('tests','marks','TEXT');                // optional per-question marks {qid: marks}
 addColumn('tests','require_camera','INTEGER');    // 1 = webcam required to start the test
 addColumn('batches','features','TEXT');
+addColumn('test_attempts','tab_switches','INTEGER'); // tab/app switches recorded during the sitting
+addColumn('test_attempts','forced','INTEGER');       // 1 = auto-submitted because of too many tab changes
 
 const J = (v) => JSON.stringify(v == null ? [] : v);
 const P = (s) => { try { return JSON.parse(s || '[]'); } catch { return []; } };

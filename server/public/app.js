@@ -253,11 +253,13 @@ function renderUserbar(){
            <button onclick="renderSubadmins()">Sub-Admins</button>
            <button onclick="renderFaculty()">Results</button>
            <button onclick="renderStaffTests()">Test Analytics</button>
+           <button onclick="renderRoster()">Student Reports</button>
            <button onclick="renderReports()">Reports</button>
            <button onclick="renderList()">Preview</button>`;
   } else if(ME.role==='subadmin'){
     nav = `<button onclick="renderFaculty()">Results</button>
-           <button onclick="renderStaffTests()">Test Analytics</button>`;
+           <button onclick="renderStaffTests()">Test Analytics</button>
+           <button onclick="renderRoster()">Students</button>`;
   } else {
     const f = ME.features || {};
     const on = (k)=> f[k] !== false;   // default on if not specified
@@ -432,7 +434,7 @@ function startTimer(){
       m=Math.floor(remain/60); s=remain%60;
       if(remain<=0){ clearInterval(timer); timer=null;
         const el=document.getElementById('timer'); if(el) el.textContent='00:00';
-        if(examMode && examKind==='test' && window.__test && !window.__autoSubmitting){ window.__autoSubmitting=true; toast('⏰ Time is up — submitting your test'); finishTest(true); }
+        if(examMode && examKind==='test' && window.__test && !window.__autoSubmitting){ window.__autoSubmitting=true; toast('⏰ Time is up — submitting your test'); finishTest(true,'time'); }
         return; }
     } else { if(t>0)t--; m=Math.floor(t/60); s=t%60; }
     const el=document.getElementById('timer'); if(el) el.textContent=(m<10?'0':'')+m+':'+(s<10?'0':'')+s;
@@ -713,19 +715,19 @@ async function renderFaculty(){ stopTimer();
       <div class="statcard" style="cursor:default"><div class="statval">${sm.active}</div><div class="statlabel">Active (have submitted)</div></div>
       <div class="statcard" style="cursor:default"><div class="statval">${sm.avgScore}</div><div class="statlabel">Average score</div></div>
       <div class="statcard" style="cursor:default"><div class="statval">${sm.solvedTotal}</div><div class="statlabel">Problems solved (100/100)</div></div>
-      <div class="statcard" style="cursor:default"><div class="statval">${sm.flagged||0}</div><div class="statlabel">Flagged (proctoring)</div></div>
+      ${ME.role==='admin'?`<div class="statcard" style="cursor:default"><div class="statval">${sm.flagged||0}</div><div class="statlabel">Flagged (proctoring)</div></div>`:''}
     </div>
     <div class="split">
       ${gtable('By Branch', d.byBranch, 'Branch')}
       ${gtable('By Year of passing', d.byYear, 'Year')}
     </div>
     ${gtable('By Batch (lowest avg first — intervene early)', d.byBatch, 'Batch')}
-    <div class="card" style="margin-bottom:14px">
+    ${ME.role==='admin'?`<div class="card" style="margin-bottom:14px">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px"><h2 style="margin:0">Students</h2><span class="grow"></span>
         <button class="btn btn-ghost" onclick="exportResults()">Export CSV</button>
         <select id="an-filter" onchange="filterStudents()">${filterOpts}</select></div>
       <table><tr><th>Student</th><th>Batch</th><th>Branch</th><th>Year</th><th>Avg</th><th>Solved</th><th>Attempts</th><th>Flags</th><th>Status</th><th>Proctoring</th></tr>
-      <tbody id="an-rows">${rows}</tbody></table></div>
+      <tbody id="an-rows">${rows}</tbody></table></div>`:'<p class="muted" style="margin:6px 0 14px">Use the <b>Students</b> tab to browse students by batch and see each student\'s test scores.</p>'}
     <div class="card"><h2>Weakest topics</h2>${weak}</div>`;
 }
 function filterStudents(){ const v=document.getElementById('an-filter').value;
@@ -1342,16 +1344,18 @@ function examNext(){ const t=window.__test; if(t) examGoto(t.idx+1); }
 function confirmFinishTest(){ const t=window.__test; if(!t) return;
   if(!confirm(`Finish and submit the test? You've submitted ${t.answered.length} of ${t.questions.length} question(s). This cannot be undone.`)) return;
   saveCurrentCode(); finishTest(false); }
-async function finishTest(auto){
+async function finishTest(auto, reason){
   const t=window.__test; if(!t) return;
   const testId=t.id, title=t.title, questions=t.questions, reveal=t.reveal;   // keep for the results screen
+  const tabSwitches = proctor.tab||0;              // capture before teardown
+  const forced = !!auto && reason==='violations';  // force-closed due to too many tab changes
   advancing=false;                                 // ensure the full exam teardown runs
   stopExam(); window.__test=null; window.__examKind=null;
   let body={};
-  try{ const r=await apiPost('/api/test/finish',{ testId }); body=r.body||{}; }catch(e){}
+  try{ const r=await apiPost('/api/test/finish',{ testId, tabSwitches, forced }); body=r.body||{}; }catch(e){}
   renderUserbar();
   renderTestDone(Object.assign({ title, questions, reveal }, body));
-  if(auto) toast('⚠ Test auto-submitted after too many warnings');
+  if(auto) toast(reason==='time'?'⏰ Time is up — your test was submitted':'⚠ Test auto-submitted after too many warnings');
 }
 function renderTestDone(d){
   stopTimer(); if(ME) renderUserbar();
@@ -1403,9 +1407,18 @@ async function renderMyResults(){
 async function renderStaffTests(){
   stopTimer();
   const list = await apiGet('/api/staff/tests');
-  const rows=(list||[]).map(t=>`<div class="card prow" onclick="renderTestAnalytics('${t.id}')">
-      <div><div class="t">${esc(t.title)}</div><div class="tags">${t.questionCount} question(s)${t.durationMin?(' · '+t.durationMin+' min'):''} · ${esc(t.availability||'open')}</div></div>
-      <span class="grow"></span><button class="btn btn-ghost">Analytics →</button></div>`).join('') || '<p class="muted">No tests yet.</p>';
+  const dt=(ms)=> ms? new Date(ms).toLocaleString([], {day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+  const rows=(list||[]).map(t=>{
+    const marks = t.marksMax>0 ? (t.marksMax+' marks') : 'equal weight';
+    const batches = (t.batchNames&&t.batchNames.length) ? t.batchNames.map(esc).join(', ') : 'All batches';
+    return `<div class="card prow" onclick="renderTestAnalytics('${t.id}')">
+      <div style="min-width:0">
+        <div class="t">${esc(t.title)}</div>
+        <div class="tags">🗓 Starts ${dt(t.opensAt)} · 🎯 ${marks} · 👥 ${batches}</div>
+        <div class="tags">${t.questionCount} question(s)${t.durationMin?(' · '+t.durationMin+' min'):''} · ${esc(t.availability||'open')}</div>
+      </div>
+      <span class="grow"></span><button class="btn btn-ghost">Analytics →</button></div>`;
+  }).join('') || '<p class="muted">No tests yet.</p>';
   app.innerHTML=`<h1>Test Analytics</h1><p class="muted">Pick a test to see who took it, their scores, and timings.</p>
     <div class="plist" style="margin-top:14px">${rows}</div>`;
 }
@@ -1432,7 +1445,7 @@ async function renderTestAnalytics(id){
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">
         <h2 style="margin:0">Students</h2><span class="grow"></span>
         <input id="ta-filter" placeholder="Filter name / email / branch…" oninput="renderTaTable()" style="padding:8px 11px;border:1px solid var(--line);border-radius:9px;min-width:200px">
-        <select id="ta-status" onchange="renderTaTable()"><option value="">All statuses</option><option value="done">Submitted</option><option value="in_progress">In progress</option></select>
+        <select id="ta-status" onchange="renderTaTable()"><option value="">All statuses</option><option value="done">Submitted</option><option value="in_progress">In progress</option><option value="not_started">Not started</option></select>
         <button class="btn btn-ghost" onclick="exportTestAnalytics()">Export CSV</button>
       </div>
       <div style="overflow-x:auto"><div id="ta-table"></div></div>
@@ -1441,6 +1454,7 @@ async function renderTestAnalytics(id){
 }
 function taSort(key){ if(__taSort.key===key) __taSort.dir*=-1; else { __taSort.key=key; __taSort.dir=1; } renderTaTable(); }
 function taTime(t){ return t? new Date(t).toLocaleString() : '—'; }
+function fmtDuration(ms){ if(ms==null) return ''; const s=Math.round(ms/1000); const m=Math.floor(s/60); return m+'m '+(s%60)+'s'; }
 function renderTaTable(){
   if(!__ta) return;
   const q=(val('ta-filter')||'').toLowerCase(), stf=val('ta-status');
@@ -1450,20 +1464,22 @@ function renderTaTable(){
   const mMax=__ta.test.marksMax||0;
   const cols=[['name','Student'],['email','Email'],['branch','Branch'],['status','Status'],['score','Score']];
   if(mMax) cols.push(['marks','Marks']);
-  cols.push(['startedAt','Started'],['submittedAt','Submitted']);
+  cols.push(['timeTakenMs','Time'],['tabSwitches','Tabs'],['startedAt','Started'],['submittedAt','Submitted']);
   const arrow=(key)=> __taSort.key===key ? (__taSort.dir>0?' ▲':' ▼') : '';
   const head=cols.map(c=>`<th style="cursor:pointer;user-select:none" onclick="taSort('${c[0]}')">${c[1]}${arrow(c[0])}</th>`).join('')+'<th></th>';
   const tid=__ta.test.id;
   const colSpan=cols.length+1;
   const body=rows.map(r=>`<tr>
       <td>${esc(r.name)}</td><td>${esc(r.email)}</td><td>${esc(r.branch||'-')}</td>
-      <td>${r.status==='done'?'<span class="badge b-ready">Submitted</span>':'<span class="badge b-mod">In progress</span>'}</td>
+      <td>${r.status==='done'?'<span class="badge b-ready">Submitted</span>':(r.status==='not_started'?'<span class="badge b-imp">Not started</span>':'<span class="badge b-mod">In progress</span>')}${r.forced?' <span class="badge b-imp" title="Force-submitted after too many tab changes">forced</span>':''}</td>
       <td>${r.score==null?'—':('<b>'+r.score+'%</b>')}${r.phantom?' <span class="badge b-imp" title="Auto-closed with no code submitted">no code</span>':''}</td>
       ${mMax?`<td>${r.marks==null?'—':('<b>'+r.marks+'</b>/'+mMax)}</td>`:''}
+      <td>${r.timeTakenMs==null?'—':fmtDuration(r.timeTakenMs)}</td>
+      <td>${r.tabSwitches==null?'—':r.tabSwitches}</td>
       <td>${taTime(r.startedAt)}</td><td>${taTime(r.submittedAt)}</td>
-      <td style="white-space:nowrap">
+      <td style="white-space:nowrap">${r.started?`
         <button class="btn btn-ghost" style="padding:3px 10px" onclick="viewStudentAnswers('${r.userId}','${tid}','${esc(r.name).replace(/'/g,'')}')">Answers</button>
-        <button class="btn btn-ghost" style="padding:3px 10px" onclick="resetStudentTest('${r.userId}','${tid}','${esc(r.name).replace(/'/g,'')}')">Reset</button></td>
+        <button class="btn btn-ghost" style="padding:3px 10px" onclick="resetStudentTest('${r.userId}','${tid}','${esc(r.name).replace(/'/g,'')}')">Reset</button>`:'<span class="muted">—</span>'}</td>
     </tr>`).join('') || `<tr><td colspan="${colSpan}" class="muted">No students match.</td></tr>`;
   document.getElementById('ta-table').innerHTML=`<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
 }
@@ -1515,10 +1531,93 @@ async function resetEmptyAttempts(testId, n){
 }
 function exportTestAnalytics(){
   if(!__ta) return;
-  const rows=(__ta.rows||[]).map(r=>({ Name:r.name, Email:r.email, Branch:r.branch||'',
-    Status:r.status==='done'?'Submitted':'In progress', Score:r.score==null?'':r.score,
-    NoCodeSubmitted:r.phantom?'YES':'', Started:taTime(r.startedAt), Submitted:taTime(r.submittedAt) }));
+  const mMax=__ta.test.marksMax||0;
+  const rows=(__ta.rows||[]).map(r=>{ const o={ Name:r.name, Email:r.email, College:r.college||'', Branch:r.branch||'',
+    'Question Generated':r.started?'Yes':'No', 'Test Submitted':r.status==='done'?'Yes':'No',
+    Score:r.score==null?'':r.score };
+    if(mMax) o['Marks']=r.marks==null?'':(r.marks+'/'+mMax);
+    o['Time Taken']=fmtDuration(r.timeTakenMs);
+    o['Tab Switches']=r.tabSwitches==null?'':r.tabSwitches;
+    o['Force Submitted (tab changes)']=r.forced?'Yes':'No';
+    o['No Code Submitted']=r.phantom?'Yes':'';
+    o['Started']=taTime(r.startedAt); o['Submitted']=taTime(r.submittedAt);
+    return o; });
   downloadCSV((__ta.test.title||'test').replace(/[^\w]+/g,'_')+'_analytics.csv', rows);
+}
+
+// ---------- STAFF: STUDENTS BROWSER (by batch → student → per-test report) ----------
+let __roster=null, __rosterBatchId='';
+async function renderRoster(preselect){
+  stopTimer();
+  const d = await apiGet('/api/staff/roster-batches');
+  const batches = d.batches||[];
+  const opts = '<option value="">— Select a batch —</option>'+batches.map(b=>`<option value="${b.id}">${esc(b.name)}</option>`).join('');
+  app.innerHTML=`<h1>Students</h1>
+    <p class="muted">Pick a batch to see its students and each student's test scores. Click a student for their full report.</p>
+    <div class="card" style="margin-bottom:14px">
+      <div class="field" style="max-width:440px;margin:0"><label>Batch / Branch</label>
+        <select id="roster-batch" onchange="loadRoster(this.value)">${opts}</select></div>
+    </div>
+    <div id="roster-body">${batches.length?'<p class="muted">Select a batch above to list its students.</p>':'<p class="muted">No batches assigned to you yet.</p>'}</div>`;
+  if(preselect){ const sel=document.getElementById('roster-batch'); if(sel){ sel.value=preselect; loadRoster(preselect); } }
+}
+async function loadRoster(batchId){
+  const host=document.getElementById('roster-body'); if(!host) return;
+  __rosterBatchId=batchId||'';
+  if(!batchId){ host.innerHTML='<p class="muted">Select a batch above to list its students.</p>'; return; }
+  host.innerHTML='<p class="muted">Loading students…</p>';
+  const d = await apiGet('/api/staff/roster/'+batchId); __roster=d;
+  const students=(d.students||[]);
+  if(!students.length){ host.innerHTML='<p class="muted">No students in this batch.</p>'; return; }
+  const rows=students.map(s=>`<tr onclick="renderStudentReport('${s.id}')" style="cursor:pointer">
+      <td>${esc(s.name)}</td><td>${esc(s.email)}</td><td>${esc(s.branch||'-')}</td>
+      <td>${s.testsAttempted} / ${s.testsAssigned}</td>
+      <td>${s.avg==null?'—':('<b>'+s.avg+'%</b>')}</td>
+      <td>${(s.tests||[]).filter(t=>t.score!=null).map(t=>`<span class="chip" title="${esc(t.title)}">${t.score}%</span>`).join(' ')||'<span class="muted">—</span>'}</td>
+      <td style="white-space:nowrap"><button class="btn btn-ghost" style="padding:2px 10px">View →</button></td>
+    </tr>`).join('');
+  host.innerHTML=`<div class="card">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px"><h2 style="margin:0">${esc(d.batch.name)} · ${students.length} student(s)</h2><span class="grow"></span>
+      <input id="roster-filter" placeholder="Filter name / email…" oninput="filterRoster()" style="padding:8px 11px;border:1px solid var(--line);border-radius:9px;min-width:200px">
+      <button class="btn btn-ghost" onclick="exportRoster()">Export CSV</button></div>
+    <div style="overflow-x:auto"><table><thead><tr><th>Student</th><th>Email</th><th>Branch</th><th>Attempted</th><th>Avg</th><th>Test scores</th><th></th></tr></thead>
+    <tbody id="roster-rows">${rows}</tbody></table></div></div>`;
+}
+function filterRoster(){ const q=(val('roster-filter')||'').toLowerCase();
+  document.querySelectorAll('#roster-rows tr').forEach(tr=>{ tr.style.display = tr.textContent.toLowerCase().includes(q)?'':'none'; }); }
+function exportRoster(){ if(!__roster) return;
+  const rows=(__roster.students||[]).map(s=>{ const o={ Name:s.name, Email:s.email, College:s.college||'', Branch:s.branch||'', Batch:s.batch||'',
+      'Tests Assigned':s.testsAssigned, 'Tests Attempted':s.testsAttempted, 'Avg Score':s.avg==null?'':s.avg };
+    (s.tests||[]).forEach(t=>{ o[t.title]=t.score==null?(t.status==='not_started'?'Not started':'—'):t.score; });
+    return o; });
+  downloadCSV(((__roster.batch&&__roster.batch.name)||'batch').replace(/[^\w]+/g,'_')+'_students.csv', rows);
+}
+async function renderStudentReport(userId){
+  stopTimer();
+  const d = await apiGet('/api/staff/student-report/'+userId);
+  if(!d || !d.student){ toast('Could not load student report'); return; }
+  const s=d.student;
+  const rows=(d.tests||[]).map(t=>`<tr>
+      <td>${esc(t.title)}</td>
+      <td>${t.status==='done'?'<span class="badge b-ready">Submitted</span>':(t.status==='not_started'?'<span class="badge b-imp">Not started</span>':'<span class="badge b-mod">In progress</span>')}${t.forced?' <span class="badge b-imp" title="Force-submitted after too many tab changes">forced</span>':''}</td>
+      <td>${t.score==null?'—':('<b>'+t.score+'%</b>')}</td>
+      <td>${t.marksMax?(t.marks==null?'—':(t.marks+'/'+t.marksMax)):'—'}</td>
+      <td>${t.tabSwitches==null?'—':t.tabSwitches}</td>
+      <td>${taTime(t.submittedAt)}</td>
+    </tr>`).join('') || '<tr><td colspan="6" class="muted">No tests assigned to this student.</td></tr>';
+  const done=(d.tests||[]).filter(t=>t.status==='done'), scores=done.map(t=>t.score);
+  const avg=scores.length?Math.round(scores.reduce((a,b)=>a+b,0)/scores.length):null;
+  app.innerHTML=`<div class="test-top"><button class="btn btn-ghost" onclick="renderRoster('${__rosterBatchId}')">← Students</button></div>
+    <h1>${esc(s.name)}</h1>
+    <p class="muted">${esc(s.email)}${s.mobile?(' · '+esc(s.mobile)):''}${s.branch?(' · '+esc(s.branch)):''}${s.batch?(' · '+esc(s.batch)):''}${s.college?(' · '+esc(s.college)):''}</p>
+    <div class="statgrid" style="margin:12px 0">
+      <div class="statcard" style="cursor:default"><div class="statval">${(d.tests||[]).length}</div><div class="statlabel">Tests assigned</div></div>
+      <div class="statcard" style="cursor:default"><div class="statval">${done.length}</div><div class="statlabel">Tests submitted</div></div>
+      <div class="statcard" style="cursor:default"><div class="statval">${avg==null?'—':avg+'%'}</div><div class="statlabel">Average score</div></div>
+    </div>
+    <div class="card"><h2>Test-by-test report</h2>
+      <div style="overflow-x:auto"><table><thead><tr><th>Test</th><th>Status</th><th>Score</th><th>Marks</th><th>Tab switches</th><th>Submitted</th></tr></thead>
+      <tbody>${rows}</tbody></table></div></div>`;
 }
 
 
@@ -1677,7 +1776,7 @@ function onProctorPaste(){ if(proctor.active){ proctor.paste++; if(examKind!=='t
 function updateProctorBadge(){
   const n=proctorWarnings();
   // End the Test after 4 violations, keeping whatever has been submitted so far.
-  if(examMode && examKind==='test' && window.__test && !window.__autoSubmitting && n>=4){ window.__autoSubmitting=true; finishTest(true); return; }
+  if(examMode && examKind==='test' && window.__test && !window.__autoSubmitting && n>=4){ window.__autoSubmitting=true; finishTest(true,'violations'); return; }
   const b=document.getElementById('proctor-badge'); if(!b) return;
   b.textContent = n? ('⚠ Violations: '+n+' of 4') : 'Proctoring: on';
   b.style.color = n? '#b23b3b' : 'var(--muted)'; b.style.borderColor = n? '#f0bcbc' : 'var(--line)'; }

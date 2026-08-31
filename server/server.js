@@ -153,19 +153,15 @@ async function handleApi(req, res, url) {
   // ---- PROCTORING: staff view a student's snapshots (sub-admin scoped to their batches) ----
   const psm = url.match(/^\/api\/proctor\/shots\/([^/]+)$/);
   if (req.method === 'GET' && psm) {
-    const me = currentUser(req); if (!isStaff(me)) return sendJSON(res, 403, { error: 'staff only' });
+    const me = currentUser(req); if (!me || me.role !== 'admin') return sendJSON(res, 403, { error: 'admin only' });
     const target = auth.findById(psm[1]); if (!target) return sendJSON(res, 404, { error: 'not found' });
-    if (me.role === 'subadmin' && !(me.assignedBatches || []).includes(target.batchId))
-      return sendJSON(res, 403, { error: 'not your student' });
     return sendJSON(res, 200, { student: target.name, shots: proctor.listForUser(target.id) });
   }
-  // ---- PROCTORING: stream one snapshot image (staff only, scoped) ----
+  // ---- PROCTORING: stream one snapshot image (admin only — camera pics are not shown to sub-admins) ----
   const pim = url.match(/^\/api\/proctor\/image\/(\d+)$/);
   if (req.method === 'GET' && pim) {
-    const me = currentUser(req); if (!isStaff(me)) { res.writeHead(403); return res.end('forbidden'); }
+    const me = currentUser(req); if (!me || me.role !== 'admin') { res.writeHead(403); return res.end('forbidden'); }
     const f = proctor.getFile(parseInt(pim[1], 10)); if (!f) { res.writeHead(404); return res.end('not found'); }
-    if (me.role === 'subadmin') { const stu = auth.findById(f.userId);
-      if (!stu || !(me.assignedBatches || []).includes(stu.batchId)) { res.writeHead(403); return res.end('forbidden'); } }
     const ext = path.extname(f.file).toLowerCase();
     res.writeHead(200, { 'Content-Type': ext === '.png' ? 'image/png' : (ext === '.webp' ? 'image/webp' : 'image/jpeg'), 'Cache-Control': 'private, max-age=3600' });
     return fs.createReadStream(f.full).pipe(res);
@@ -478,7 +474,7 @@ async function handleApi(req, res, url) {
     const me = currentUser(req); if (!me) return sendJSON(res, 401, { error: 'login required' });
     const b = await readBody(req);
     const t = b.testId ? tests.getById(String(b.testId)) : null; if (!t) return sendJSON(res, 404, { error: 'unknown test' });
-    const a = attempts.finish(me.id, String(b.testId), t.marks);
+    const a = attempts.finish(me.id, String(b.testId), t.marks, { tabSwitches: b.tabSwitches, forced: b.forced });
     return sendJSON(res, 200, { status: 'done', score: a ? a.score : 0, answers: a ? a.answers : {}, title: t.title,
       reveal: { showScore: !!t.showScore, showAnswers: !!t.showAnswers, showSolutions: !!t.showSolutions },
       marks: t.marks, marksMax: tests.marksMax(t), marksEarned: attempts.marksEarned(a ? a.answers : {}, t.marks) });
@@ -586,9 +582,13 @@ async function handleApi(req, res, url) {
   if (req.method === 'GET' && url === '/api/staff/tests') {
     const me = currentUser(req); if (!isStaff(me)) return sendJSON(res, 403, { error: 'staff only' });
     const assigned = me.assignedBatches || [];
+    const bmap = Object.fromEntries(groups.list().map((b) => [b.id, b.name]));
     const visible = tests.list().filter((t) => me.role === 'admin' || t.batchIds.length === 0 || t.batchIds.some((b) => assigned.includes(b)));
-    return sendJSON(res, 200, visible.map((t) => ({ id: t.id, title: t.title, questionCount: t.questionIds.length,
-      durationMin: t.durationMin, availability: t.availability, batchNames: t.batchIds.length, createdAt: t.createdAt })));
+    return sendJSON(res, 200, visible.map((t) => { const w = tests.windowStatus(t);
+      return { id: t.id, title: t.title, questionCount: t.questionIds.length,
+      durationMin: t.durationMin, availability: t.availability, marksMax: tests.marksMax(t),
+      opensAt: w.opensAt, closesAt: w.closesAt, windowState: w.state,
+      batchNames: t.batchIds.map((id) => bmap[id]).filter(Boolean), createdAt: t.createdAt }; }));
   }
   // ---- STAFF: per-test analytics (student rows + counts; sub-admin scoped) ----
   const tam = url.match(/^\/api\/staff\/test-analytics\/([^/]+)$/);
@@ -604,18 +604,30 @@ async function handleApi(req, res, url) {
       && (t.batchIds.length === 0 || t.batchIds.includes(u.batchId)) && inScope(u));
     const mMax = tests.marksMax(t);
     const durationMin = t.durationMin || 0;
+    const bmap = Object.fromEntries(groups.list().map((b) => [b.id, b]));
+    const collegeOf = (u) => u.college || (bmap[u.batchId] ? bmap[u.batchId].college : '') || String(u.batch || '').split('·')[0].trim();
+    const branchOf = (u) => u.branch || (bmap[u.batchId] ? bmap[u.batchId].branch : '') || String(u.batch || '').split('·')[1] || '';
     // Did the student ever submit real code for ANY question in this test?
     const hasCode = (uid) => t.questionIds.some((qid) => { const s = auth.latestSubmission(uid, qid); return !!(s && s.code && String(s.code).trim()); });
     // Is the sitting over (submitted, or the personal timer has elapsed)?
     const sittingOver = (a) => a.status === 'done' || (durationMin > 0 && Date.now() >= a.startedAt + durationMin * 60000);
-    const rows = attempts.listForTest(t.id).map((a) => { const u = auth.findById(a.userId); return { a, u }; })
-      .filter((x) => x.u && x.u.role === 'student' && inScope(x.u))
-      .map(({ a, u }) => { const hc = hasCode(u.id); const phantom = !hc && sittingOver(a);
-        return { userId: u.id, name: u.name, email: u.email, branch: u.branch || '', batch: u.batch || '',
-        status: a.status, score: a.status === 'done' ? a.score : null, total: a.total, answered: Object.keys(a.answers).length,
-        marks: mMax ? attempts.marksEarned(a.answers, t.marks) : null, noCode: !hc, phantom,
-        startedAt: a.startedAt, submittedAt: a.status === 'done' ? a.submittedAt : null }; });
-    const started = rows.length, submitted = rows.filter((r) => r.status === 'done').length;
+    const attemptByUser = Object.fromEntries(attempts.listForTest(t.id).map((a) => [a.userId, a]));
+    // One row per ASSIGNED student — so the export is a complete roster with yes/no flags.
+    const rows = assignedStudents.map((u) => {
+      const a = attemptByUser[u.id];
+      const started = !!a;                                  // "question generated" = the test was actually served
+      const done = !!a && a.status === 'done';
+      const hc = started && hasCode(u.id);
+      const phantom = started && !hc && sittingOver(a);
+      const timeTakenMs = done ? Math.max(0, (a.submittedAt || 0) - (a.startedAt || 0)) : null;
+      return { userId: u.id, name: u.name, email: u.email, college: collegeOf(u), branch: String(branchOf(u)).trim(), batch: u.batch || '',
+        started, status: a ? a.status : 'not_started', score: done ? a.score : null, total: a ? a.total : 0,
+        answered: a ? Object.keys(a.answers).length : 0, marks: (mMax && a) ? attempts.marksEarned(a.answers, t.marks) : null,
+        noCode: started ? !hc : null, phantom, timeTakenMs,
+        tabSwitches: a ? (a.tabSwitches || 0) : null, forced: a ? !!a.forced : false,
+        startedAt: a ? a.startedAt : null, submittedAt: done ? a.submittedAt : null };
+    });
+    const started = rows.filter((r) => r.started).length, submitted = rows.filter((r) => r.status === 'done').length;
     const phantom = rows.filter((r) => r.phantom).length;
     return sendJSON(res, 200, {
       test: { id: t.id, title: t.title, questionCount: t.questionIds.length, durationMin: t.durationMin, availability: t.availability, marksMax: mMax },
@@ -684,6 +696,57 @@ async function handleApi(req, res, url) {
       if (!hasCode(u.id) && sittingOver(a) && attempts.remove(u.id, t.id)) reset++;
     }
     return sendJSON(res, 200, { reset });
+  }
+
+  // ---- STAFF STUDENTS BROWSER: batches this staff member can browse ----
+  if (req.method === 'GET' && url === '/api/staff/roster-batches') {
+    const me = currentUser(req); if (!isStaff(me)) return sendJSON(res, 403, { error: 'staff only' });
+    const assigned = me.assignedBatches || [];
+    const list = groups.list().filter((b) => me.role === 'admin' || assigned.includes(b.id))
+      .map((b) => ({ id: b.id, name: b.name, college: b.college, branch: b.branch, yearOfPassing: b.yearOfPassing }));
+    return sendJSON(res, 200, { batches: list });
+  }
+  // ---- STAFF STUDENTS BROWSER: students in one batch + their test summary ----
+  const rosm = url.match(/^\/api\/staff\/roster\/([^/]+)$/);
+  if (req.method === 'GET' && rosm) {
+    const me = currentUser(req); if (!isStaff(me)) return sendJSON(res, 403, { error: 'staff only' });
+    const batchId = rosm[1];
+    if (me.role === 'subadmin' && !(me.assignedBatches || []).includes(batchId)) return sendJSON(res, 403, { error: 'not your batch' });
+    const b = groups.getById(batchId); if (!b) return sendJSON(res, 404, { error: 'unknown batch' });
+    const allTests = tests.list();
+    const students = auth.allUsers().filter((u) => u.role === 'student' && u.batchId === batchId).map((u) => {
+      const college = u.college || b.college || String(u.batch || '').split('·')[0].trim();
+      const branch = (u.branch || b.branch || String(u.batch || '').split('·')[1] || '').trim();
+      const assignedTests = allTests.filter((t) => t.batchIds.length === 0 || t.batchIds.includes(u.batchId));
+      const atts = Object.fromEntries(attempts.listForUser(u.id).map((a) => [a.testId, a]));
+      const trows = assignedTests.map((t) => { const a = atts[t.id];
+        return { testId: t.id, title: t.title, status: a ? a.status : 'not_started', score: (a && a.status === 'done') ? a.score : null }; });
+      const attempted = trows.filter((r) => r.status !== 'not_started').length;
+      const scored = trows.filter((r) => r.score != null).map((r) => r.score);
+      const avg = scored.length ? Math.round(scored.reduce((x, y) => x + y, 0) / scored.length) : null;
+      return { id: u.id, name: u.name, email: u.email, branch, batch: u.batch || '', college,
+        testsAssigned: assignedTests.length, testsAttempted: attempted, avg, tests: trows };
+    }).sort((a, b2) => a.name.localeCompare(b2.name));
+    return sendJSON(res, 200, { batch: { id: b.id, name: b.name }, students });
+  }
+  // ---- STAFF STUDENTS BROWSER: one student's full per-test report ----
+  const srm = url.match(/^\/api\/staff\/student-report\/([^/]+)$/);
+  if (req.method === 'GET' && srm) {
+    const me = currentUser(req); if (!isStaff(me)) return sendJSON(res, 403, { error: 'staff only' });
+    const u = auth.findById(srm[1]); if (!u || u.role !== 'student') return sendJSON(res, 404, { error: 'student not found' });
+    if (me.role === 'subadmin' && !(me.assignedBatches || []).includes(u.batchId)) return sendJSON(res, 403, { error: 'not your student' });
+    const ub = groups.getById(u.batchId);
+    const uCollege = u.college || (ub ? ub.college : '') || String(u.batch || '').split('·')[0].trim();
+    const uBranch = (u.branch || (ub ? ub.branch : '') || String(u.batch || '').split('·')[1] || '').trim();
+    const atts = Object.fromEntries(attempts.listForUser(u.id).map((a) => [a.testId, a]));
+    const rows = tests.list().filter((t) => t.batchIds.length === 0 || t.batchIds.includes(u.batchId)).map((t) => {
+      const a = atts[t.id]; const mMax = tests.marksMax(t); const done = !!a && a.status === 'done';
+      return { testId: t.id, title: t.title, status: a ? a.status : 'not_started', score: done ? a.score : null,
+        marks: (a && mMax) ? attempts.marksEarned(a.answers, t.marks) : null, marksMax: mMax,
+        startedAt: a ? a.startedAt : null, submittedAt: done ? a.submittedAt : null,
+        tabSwitches: a ? (a.tabSwitches || 0) : null, forced: a ? !!a.forced : false };
+    });
+    return sendJSON(res, 200, { student: { id: u.id, name: u.name, email: u.email, branch: uBranch, batch: u.batch || '', college: uCollege, mobile: u.mobile || '' }, tests: rows });
   }
 
   // ---- GROUP-WISE ANALYTICS (staff; scoped for sub-admin) ----
