@@ -769,26 +769,32 @@ async function handleApi(req, res, url) {
       const flags = subs.reduce((a, x) => a + (x.violations || 0), 0);
       return { id: u.id, name: u.name, batchId: u.batchId || '', batch: u.batch || '(unassigned)',
         branch: u.branch || '(none)', year: u.yearOfPassing || '(none)',
-        avg, solved: vals.filter((v) => v === 100).length, attempts: subs.length, flags };
+        avg, solved: vals.filter((v) => v === 100).length, attempts: subs.length, problemsTried: vals.length, flags };
     });
+    // Group stats count ALL students, but the average is over students who actually
+    // attempted something (an untouched student is not a "0%" score, just non-participation).
     const groupBy = (keyFn, labelFn) => {
       const m = {};
       for (const p of per) { const k = keyFn(p);
-        (m[k] = m[k] || { label: labelFn(p), students: 0, sumAvg: 0, solved: 0 });
-        m[k].students++; m[k].sumAvg += p.avg; m[k].solved += p.solved; }
-      return Object.values(m).map((g) => ({ label: g.label, students: g.students,
-        avg: g.students ? Math.round(g.sumAvg / g.students) : 0, solved: g.solved }))
-        .sort((a, b) => a.avg - b.avg);
+        (m[k] = m[k] || { label: labelFn(p), students: 0, active: 0, sumAvgActive: 0, solved: 0 });
+        m[k].students++; if (p.attempts > 0) { m[k].active++; m[k].sumAvgActive += p.avg; } m[k].solved += p.solved; }
+      return Object.values(m).map((g) => ({ label: g.label, students: g.students, active: g.active,
+        avg: g.active ? Math.round(g.sumAvgActive / g.active) : 0, solved: g.solved }))
+        .sort((a, b) => (a.active === 0) - (b.active === 0) || a.avg - b.avg);
     };
     const weak = {};
     for (const sub of auth.allSubmissions()) if (idset.has(sub.userId) && (sub.score || 0) < 100)
       for (const t of (sub.tags || [])) weak[t] = (weak[t] || 0) + 1;
     const weakTopics = Object.entries(weak).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([tag, count]) => ({ tag, count }));
     const active = per.filter((p) => p.attempts > 0).length;
-    const overallAvg = per.length ? Math.round(per.reduce((a, p) => a + p.avg, 0) / per.length) : 0;
+    const avgAll = per.length ? Math.round(per.reduce((a, p) => a + p.avg, 0) / per.length) : 0;         // includes non-participants as 0
+    const avgActive = active ? Math.round(per.filter((p) => p.attempts > 0).reduce((a, p) => a + p.avg, 0) / active) : 0;
     return sendJSON(res, 200, {
       scope,
-      summary: { students: per.length, active, avgScore: overallAvg, solvedTotal: per.reduce((a, p) => a + p.solved, 0), flagged: per.filter((p) => p.flags > 0).length },
+      summary: { students: per.length, active, notActive: per.length - active,
+        participationPct: per.length ? Math.round(active / per.length * 100) : 0,
+        avgScore: avgAll, avgActive, solvedTotal: per.reduce((a, p) => a + p.solved, 0),
+        flagged: per.filter((p) => p.flags > 0).length },
       byBatch: groupBy((p) => p.batchId || 'none', (p) => p.batch),
       byBranch: groupBy((p) => p.branch, (p) => p.branch),
       byYear: groupBy((p) => p.year, (p) => p.year),

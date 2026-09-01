@@ -698,37 +698,63 @@ async function loadDemo(btn){
 // ---------- FACULTY DASHBOARD ----------
 async function renderFaculty(){ stopTimer();
   const d = await apiGet('/api/analytics'); lastResults = (d.students||[]);
-  const sm = d.summary||{students:0,active:0,avgScore:0,solvedTotal:0};
-  const status = (a)=> a>=85?'<span class="badge b-ready">Ready</span>':(a>=50?'<span class="badge b-mod">Moderate</span>':'<span class="badge b-imp">Needs work</span>');
-  const gtable = (title, arr, unit)=>`<div class="card" style="margin-bottom:14px"><h2>${title}</h2>
-    <table><tr><th>${unit}</th><th>Students</th><th>Avg score</th><th>Solved</th><th>Status</th></tr>
-    ${(arr||[]).map(g=>`<tr><td>${esc(g.label)}</td><td>${g.students}</td><td>${g.avg}</td><td>${g.solved}</td><td>${status(g.avg)}</td></tr>`).join('')||'<tr><td colspan="5" class="muted">No data yet.</td></tr>'}</table></div>`;
-  const batchNames = [...new Set((d.students||[]).map(s=>s.batch))];
-  const filterOpts = '<option value="">All batches</option>'+batchNames.map(b=>`<option value="${esc(b)}">${esc(b)}</option>`).join('');
-  const rows = (d.students||[]).map(s=>`<tr data-batch="${esc(s.batch)}"><td>${esc(s.name)}</td><td>${esc(s.batch)}</td><td>${esc(s.branch)}</td><td>${esc(s.year)}</td><td>${s.avg}</td><td>${s.solved}</td><td>${s.attempts}</td><td>${s.flags?('<span class="badge b-imp">⚠ '+s.flags+'</span>'):'—'}</td><td>${status(s.avg)}</td><td>${s.id?`<button class="btn btn-ghost" style="padding:2px 8px" onclick="renderProctor('${s.id}','${esc(s.name).replace(/'/g,'')}')">📷 Camera</button>`:''}</td></tr>`).join('')
-    || '<tr><td colspan="10" class="muted">No students yet.</td></tr>';
-  const weak = (d.weakTopics||[]).map(w=>`<div class="skill"><div class="r"><span>${esc(w.tag)}</span><span>${w.count} weak submissions</span></div>
+  const sm = d.summary||{students:0,active:0,notActive:0,participationPct:0,avgActive:0,solvedTotal:0};
+  const isAdmin = ME.role==='admin';
+  // A student who never attempted anything is "no activity", not a 0% score.
+  const gstatus = (g)=> g.active===0 ? '<span class="badge b-mod">No activity yet</span>'
+      : (g.avg>=85?'<span class="badge b-ready">Strong</span>':(g.avg>=50?'<span class="badge b-mod">Moderate</span>':'<span class="badge b-imp">Needs work</span>'));
+  const pct=(n,d2)=> d2? Math.round(n/d2*100) : 0;
+  const gtable = (title, arr, unit, note)=>`<div class="card" style="margin-bottom:14px"><h2 style="margin-bottom:2px">${title}</h2>
+    ${note?`<p class="muted" style="margin:0 0 8px;font-size:12px">${note}</p>`:''}
+    <div style="overflow-x:auto"><table><tr><th>${unit}</th><th>Students</th><th>Attempted</th><th>Avg&nbsp;/100</th><th>Solved&nbsp;100%</th><th>Status</th></tr>
+    ${(arr||[]).map(g=>`<tr><td>${esc(g.label)}</td><td>${g.students}</td><td>${g.active} <span class="muted">(${pct(g.active,g.students)}%)</span></td><td>${g.active?('<b>'+g.avg+'</b>'):'—'}</td><td>${g.solved}</td><td>${gstatus(g)}</td></tr>`).join('')||'<tr><td colspan="6" class="muted">No data yet.</td></tr>'}</table></div></div>`;
+  const statCard=(v,l,def)=>`<div class="statcard" style="cursor:default;text-align:left;padding:14px 16px"><div class="statval" style="font-size:30px">${v}</div><div class="statlabel" style="font-weight:700">${l}</div><div class="muted" style="font-size:11px;margin-top:3px;line-height:1.35">${def}</div></div>`;
+  // ---- Insights: turn the numbers into actions ----
+  const insights=[];
+  if(sm.notActive>0) insights.push(`<b>${sm.notActive} of ${sm.students} students (${100-sm.participationPct}%) haven't attempted anything yet.</b> Share the platform link and assign a short warm-up test so they begin practising.`);
+  const ready=(d.students||[]).filter(s=>s.attempts>0 && s.avg>=85).length;
+  if(ready) insights.push(`<b>${ready} student(s)</b> are performing strongly (average ≥ 85/100) — good candidates for placement drives.`);
+  if((d.weakTopics||[]).length) insights.push(`Students lose the most marks in <b>${d.weakTopics.slice(0,3).map(w=>esc(w.tag)).join(', ')}</b>. Assign focused practice on these topics.`);
+  const weakestBatch=(d.byBatch||[]).filter(g=>g.active>0).sort((a,b)=>a.avg-b.avg)[0];
+  if(weakestBatch) insights.push(`Lowest-performing active group: <b>${esc(weakestBatch.label)}</b> (avg ${weakestBatch.avg}/100 across ${weakestBatch.active} active student(s)). Consider a revision session there.`);
+  const lowPart=(d.byBatch||[]).filter(g=>g.students>=5 && pct(g.active,g.students)<40).sort((a,b)=>pct(a.active,a.students)-pct(b.active,b.students))[0];
+  if(lowPart) insights.push(`<b>${esc(lowPart.label)}</b> has very low participation (only ${pct(lowPart.active,lowPart.students)}% started). Follow up with that batch's coordinator.`);
+  if(isAdmin && sm.flagged>0) insights.push(`<b>${sm.flagged} student(s)</b> triggered proctoring violations during tests — review them in <b>Test Analytics</b>.`);
+  if(!insights.length) insights.push('Not enough activity yet to draw conclusions. Encourage students to start their assigned tests.');
+  // ---- admin-only per-student table ----
+  const batchNames=[...new Set((d.students||[]).map(s=>s.batch))];
+  const filterOpts='<option value="">All batches</option>'+batchNames.map(b=>`<option value="${esc(b)}">${esc(b)}</option>`).join('');
+  const sstatus=(s)=> s.attempts===0?'<span class="badge b-mod">Not started</span>':(s.avg>=85?'<span class="badge b-ready">Strong</span>':(s.avg>=50?'<span class="badge b-mod">Moderate</span>':'<span class="badge b-imp">Needs work</span>'));
+  const rows=(d.students||[]).map(s=>`<tr data-batch="${esc(s.batch)}"><td>${esc(s.name)}</td><td>${esc(s.batch)}</td><td>${esc(s.branch)}</td><td>${esc(s.year)}</td><td>${s.attempts?('<b>'+s.avg+'</b>'):'—'}</td><td>${s.solved}</td><td>${s.problemsTried||0}</td><td>${s.flags?('<span class="badge b-imp">⚠ '+s.flags+'</span>'):'—'}</td><td>${sstatus(s)}</td><td>${s.id?`<button class="btn btn-ghost" style="padding:2px 8px" onclick="renderProctor('${s.id}','${esc(s.name).replace(/'/g,'')}')">📷 Camera</button>`:''}</td></tr>`).join('') || '<tr><td colspan="10" class="muted">No students yet.</td></tr>';
+  const weak=(d.weakTopics||[]).map(w=>`<div class="skill"><div class="r"><span>${esc(w.tag)}</span><span>${w.count} low-scoring submission(s)</span></div>
     <div class="track"><i class="bad" style="width:${Math.min(100,w.count*15)}%"></i></div></div>`).join('') || '<p class="muted">Not enough data yet.</p>';
-  app.innerHTML = `<h1>Results &amp; Analytics</h1><p class="muted">Showing: ${esc(d.scope||'')}</p>
-    <div class="statgrid" style="margin-bottom:16px">
-      <div class="statcard" style="cursor:default"><div class="statval">${sm.students}</div><div class="statlabel">Students</div></div>
-      <div class="statcard" style="cursor:default"><div class="statval">${sm.active}</div><div class="statlabel">Active (have submitted)</div></div>
-      <div class="statcard" style="cursor:default"><div class="statval">${sm.avgScore}</div><div class="statlabel">Average score</div></div>
-      <div class="statcard" style="cursor:default"><div class="statval">${sm.solvedTotal}</div><div class="statlabel">Problems solved (100/100)</div></div>
-      ${ME.role==='admin'?`<div class="statcard" style="cursor:default"><div class="statval">${sm.flagged||0}</div><div class="statlabel">Flagged (proctoring)</div></div>`:''}
+  app.innerHTML = `<h1>Results &amp; Analytics</h1>
+    <p class="muted" style="max-width:820px">${esc(d.scope||'')}. This page summarises <b>all coding activity</b> — assigned tests, free practice and the 100 Days challenge combined. For formal per-test scores use <b>Test Analytics</b>; to look up one student use <b>Students</b>.</p>
+    <div class="statgrid" style="margin-bottom:14px">
+      ${statCard(sm.students,'Students','Total students in your scope')}
+      ${statCard((sm.active||0)+' <span style="font-size:16px">('+(sm.participationPct||0)+'%)</span>','Participation','Students who have attempted at least one problem')}
+      ${statCard(sm.active?(sm.avgActive+' <span style="font-size:16px">/100</span>'):'—','Average score','Average best score per problem — counting only students who attempted. Non-participants are excluded so this reflects real skill.')}
+      ${statCard(sm.solvedTotal||0,'Problems solved','Number of problems solved with a perfect 100/100 (across all students)')}
+      ${isAdmin?statCard(sm.flagged||0,'Flagged','Students with proctoring violations during tests'):''}
     </div>
+    <div class="card" style="border-left:4px solid var(--gold,#4f46e5);margin-bottom:16px">
+      <h2 style="margin-top:0">💡 Insights &amp; what to do next</h2>
+      <ul style="margin:0;padding-left:20px;line-height:1.75">${insights.map(i=>`<li>${i}</li>`).join('')}</ul>
+    </div>
+    <p class="muted" style="font-size:12px;margin:0 0 8px"><b>How to read the tables:</b> “Attempted” = how many of the group have tried at least one problem. “Avg /100” is only among those students. Status — <span class="badge b-ready">Strong</span> avg ≥ 85 · <span class="badge b-mod">Moderate</span> 50–84 · <span class="badge b-imp">Needs work</span> below 50 · <span class="badge b-mod">No activity yet</span> nobody has started.</p>
     <div class="split">
       ${gtable('By Branch', d.byBranch, 'Branch')}
       ${gtable('By Year of passing', d.byYear, 'Year')}
     </div>
-    ${gtable('By Batch (lowest avg first — intervene early)', d.byBatch, 'Batch')}
-    ${ME.role==='admin'?`<div class="card" style="margin-bottom:14px">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px"><h2 style="margin:0">Students</h2><span class="grow"></span>
+    ${gtable('By Batch', d.byBatch, 'Batch', 'Least-engaged and lowest-scoring batches are listed first, so you can intervene where it matters most.')}
+    ${isAdmin?`<div class="card" style="margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px"><h2 style="margin:0">Every student</h2><span class="grow"></span>
         <button class="btn btn-ghost" onclick="exportResults()">Export CSV</button>
         <select id="an-filter" onchange="filterStudents()">${filterOpts}</select></div>
-      <table><tr><th>Student</th><th>Batch</th><th>Branch</th><th>Year</th><th>Avg</th><th>Solved</th><th>Attempts</th><th>Flags</th><th>Status</th><th>Proctoring</th></tr>
-      <tbody id="an-rows">${rows}</tbody></table></div>`:'<p class="muted" style="margin:6px 0 14px">Use the <b>Students</b> tab to browse students by batch and see each student\'s test scores.</p>'}
-    <div class="card"><h2>Weakest topics</h2>${weak}</div>`;
+      <div style="overflow-x:auto"><table><tr><th>Student</th><th>Batch</th><th>Branch</th><th>Year</th><th>Avg&nbsp;/100</th><th>Solved&nbsp;100%</th><th>Problems tried</th><th>Flags</th><th>Status</th><th>Proctoring</th></tr>
+      <tbody id="an-rows">${rows}</tbody></table></div></div>`:'<p class="muted" style="margin:6px 0 14px">Use the <b>Students</b> tab to browse students by batch and see each student\'s test scores.</p>'}
+    <div class="card"><h2>Weakest topics</h2>
+      <p class="muted" style="margin-top:0">Topics where students most often scored below 100% — the best candidates for revision sessions.</p>${weak}</div>`;
 }
 function filterStudents(){ const v=document.getElementById('an-filter').value;
   document.querySelectorAll('#an-rows tr').forEach(tr=>{ tr.style.display=(!v||tr.dataset.batch===v)?'':'none'; }); }
@@ -1889,7 +1915,13 @@ function downloadCSV(filename, rows){
   a.download=filename; a.click();
 }
 let lastResults=[], lastLeaderboard=[], lastStandings=[];
-function exportResults(){ downloadCSV('results.csv', lastResults); }
+function exportResults(){
+  const rows=(lastResults||[]).map(s=>({ Name:s.name, Batch:s.batch, Branch:s.branch, Year:s.year,
+    'Avg score /100':s.attempts?s.avg:'', 'Problems solved (100%)':s.solved, 'Problems tried':s.problemsTried||0,
+    'Total submissions':s.attempts, 'Proctoring flags':s.flags||0,
+    Status: s.attempts===0?'Not started':(s.avg>=85?'Strong':(s.avg>=50?'Moderate':'Needs work')) }));
+  downloadCSV('results.csv', rows);
+}
 function exportLeaderboard(){ downloadCSV('leaderboard.csv', lastLeaderboard); }
 function exportStandings(){ downloadCSV('contest-standings.csv', lastStandings); }
 function exportReportData(){ downloadCSV('top-students.csv', (window.__report&&window.__report.top)||[]); }
